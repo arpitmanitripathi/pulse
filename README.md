@@ -9,7 +9,7 @@ and public status pages.
 
 | Milestone | State |
 |---|---|
-| M0 Setup | 🔄 waiting for first CI run |
+| M0 Setup | ✅ |
 | M1 Auth | ⏳ |
 | M2 Monitors | ⏳ |
 | M3 Scheduler + checker | ⏳ |
