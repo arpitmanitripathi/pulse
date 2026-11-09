@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: pulse
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/pulse}
+    username: ${DB_USER:pulse}
+    password: ${DB_PASSWORD:pulse}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate   # Flyway owns the schema; Hibernate only checks it matches
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6380}
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
