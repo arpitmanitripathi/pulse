@@ -172,7 +172,7 @@ No database transaction is ever held open during an HTTP check.
 
 | Package | Components |
 |---|---|
-| `auth` | `AuthController`, `AuthService`, `JwtService`, `RefreshTokenRepository`, `JwtAuthFilter` |
+| `auth` | `AuthController`, `MeController`, `AuthService`, `JwtService`, `UserRepository`, `RefreshTokenRepository` (JWTs are checked by Spring Security's built-in bearer-token filter) |
 | `monitor` | `MonitorController`, `MonitorService`, `MonitorRepository` |
 | `security` | `SsrfGuard`, `RateLimiter` (Redis fixed window), `SecurityConfig` |
 | `check` | `SchedulerLoop`, `MonitorClaimer`, `HttpChecker`, `CheckResultProcessor`, `CheckResultRepository` |
@@ -248,6 +248,10 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | Date | Change | Reason |
 |---|---|---|
 | 2026-11-10 | Plan created | — |
+| 2026-11-10 | JWTs are validated by Spring Security's resource-server support (Nimbus, HS256) instead of a hand-written `JwtAuthFilter` | Less custom security code; the framework's filter is battle-tested |
+| 2026-11-10 | Reusing an already-rotated refresh token revokes all of that user's refresh tokens | A reused token means it was probably stolen; standard refresh-token reuse detection |
+| 2026-11-10 | Passwords: 10 characters minimum, 72 bytes maximum | BCrypt only reads the first 72 bytes; Spring Security rejects longer input |
+| 2026-11-10 | M1 also delivers `GET /api/me`, Swagger UI and the problem+json error handler | Needed to test auth by hand before the frontend exists |
 
 ## Parking lot (ideas for after v1, not built now)
 -
