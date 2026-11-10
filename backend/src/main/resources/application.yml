@@ -18,6 +18,9 @@ spring:
   threads:
     virtual:
       enabled: true
+  mvc:
+    problemdetails:
+      enabled: true
 
 server:
   shutdown: graceful
@@ -30,3 +33,17 @@ management:
   endpoint:
     health:
       show-details: never
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui
+
+pulse:
+  auth:
+    jwt-secret: ${JWT_SECRET:}          # required, at least 32 characters; the app refuses to start without it
+    access-token-ttl: 15m
+    refresh-token-ttl: 7d
+    cookie-secure: ${COOKIE_SECURE:true}
+  rate-limit:
+    auth-per-minute: 10
+    public-per-minute: 60

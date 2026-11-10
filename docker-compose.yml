@@ -39,6 +39,8 @@ services:
       DB_PASSWORD: pulse
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      JWT_SECRET: local-dev-only-secret-change-me-in-production
+      COOKIE_SECURE: "false"   # plain http on localhost; production uses true
     ports:
       - "8080:8080"
     depends_on:

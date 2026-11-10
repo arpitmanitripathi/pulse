@@ -10,7 +10,7 @@ and public status pages.
 | Milestone | State |
 |---|---|
 | M0 Setup | ✅ |
-| M1 Auth | ⏳ |
+| M1 Auth | ✅ |
 | M2 Monitors | ⏳ |
 | M3 Scheduler + checker | ⏳ |
 | M4 Incidents + alerts | ⏳ |
@@ -28,6 +28,9 @@ Requirements: Docker, Java 21.
 docker compose up --build        # app on :8080, Postgres :5433, Redis :6380, Mailpit inbox :8025
 curl localhost:8080/actuator/health
 ```
+
+API docs and a try-it-out console: http://localhost:8080/swagger-ui
+(register, log in, then click **Authorize** and paste the access token).
 
 Run the tests (Docker must be running; Testcontainers starts Postgres and Redis):
 

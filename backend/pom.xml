@@ -17,6 +17,7 @@
 	<properties>
 		<java.version>21</java.version>
 		<jacoco.version>0.8.13</jacoco.version>
+		<springdoc.version>3.2.0</springdoc.version>
 	</properties>
 
 	<dependencies>
@@ -57,6 +58,21 @@
 			<artifactId>postgresql</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<dependency>
+			<!-- JWT encoding (Nimbus) and the bearer-token filter that validates JWTs -->
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+		</dependency>
+		<dependency>
+			<!-- Swagger UI at /swagger-ui -->
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+			<version>${springdoc.version}</version>
+		</dependency>
 
 		<!-- Tests -->
 		<dependency>
@@ -92,6 +108,11 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security-test</artifactId>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
