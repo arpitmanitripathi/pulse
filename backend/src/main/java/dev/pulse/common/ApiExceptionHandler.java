@@ -27,6 +27,13 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 		return ProblemDetail.forStatusAndDetail(ex.status(), ex.getMessage());
 	}
 
+	@ExceptionHandler(FieldValidationException.class)
+	ProblemDetail handleFieldValidation(FieldValidationException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "One or more fields are invalid.");
+		problem.setProperty("errors", Map.of(ex.field(), ex.getMessage()));
+		return problem;
+	}
+
 	@Override
 	protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
 			HttpHeaders headers, HttpStatusCode status, WebRequest request) {

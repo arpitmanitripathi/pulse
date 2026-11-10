@@ -1,0 +1,130 @@
+package dev.pulse.monitor;
+
+import java.time.Clock;
+import java.util.List;
+import java.util.UUID;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import dev.pulse.auth.UserRepository;
+import dev.pulse.common.ApiException;
+import dev.pulse.common.FieldValidationException;
+import dev.pulse.monitor.MonitorRequests.CreateMonitorRequest;
+import dev.pulse.monitor.MonitorRequests.UpdateMonitorRequest;
+import dev.pulse.security.SsrfGuard;
+import dev.pulse.security.SsrfGuard.UnsafeUrlException;
+
+@Service
+public class MonitorService {
+
+	public static final int MAX_MONITORS_PER_USER = 20;
+	static final int DEFAULT_TIMEOUT_MS = 5000;
+
+	private static final Logger log = LoggerFactory.getLogger(MonitorService.class);
+
+	private final MonitorRepository monitors;
+	private final UserRepository users;
+	private final SsrfGuard ssrfGuard;
+	private final Clock clock;
+
+	public MonitorService(MonitorRepository monitors, UserRepository users, SsrfGuard ssrfGuard, Clock clock) {
+		this.monitors = monitors;
+		this.users = users;
+		this.ssrfGuard = ssrfGuard;
+		this.clock = clock;
+	}
+
+	@Transactional(readOnly = true)
+	public List<Monitor> list(UUID userId) {
+		return monitors.findAllByUserIdOrderByCreatedAtAsc(userId);
+	}
+
+	@Transactional(readOnly = true)
+	public Monitor get(UUID userId, UUID monitorId) {
+		return find(userId, monitorId);
+	}
+
+	@Transactional
+	public Monitor create(UUID userId, CreateMonitorRequest request) {
+		checkUrlIsSafe(request.url());
+		// Lock the user row first: parallel creates by the same user now run one at a time,
+		// so the count below can't be stale.
+		users.lockById(userId).orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "User not found."));
+		if (monitors.countByUserId(userId) >= MAX_MONITORS_PER_USER) {
+			throw new ApiException(HttpStatus.CONFLICT,
+					"You can have at most " + MAX_MONITORS_PER_USER + " monitors. Delete one to add another.");
+		}
+		Monitor monitor = monitors.save(new Monitor(userId, request.name(), request.url(),
+				request.method() == null ? CheckMethod.GET : CheckMethod.valueOf(request.method()),
+				request.intervalSeconds(),
+				request.timeoutMs() == null ? DEFAULT_TIMEOUT_MS : request.timeoutMs(),
+				request.expectedStatus(), clock.instant()));
+		log.info("monitor.created monitor_id={} user_id={}", monitor.getId(), userId);
+		return monitor;
+	}
+
+	@Transactional
+	public Monitor update(UUID userId, UUID monitorId, UpdateMonitorRequest request) {
+		Monitor monitor = find(userId, monitorId);
+		if (request.getUrl() != null) {
+			checkUrlIsSafe(request.getUrl());
+			monitor.changeUrl(request.getUrl(), clock.instant());
+		}
+		if (request.getName() != null) {
+			monitor.rename(request.getName());
+		}
+		if (request.getMethod() != null) {
+			monitor.changeMethod(CheckMethod.valueOf(request.getMethod()));
+		}
+		if (request.getIntervalSeconds() != null) {
+			monitor.changeInterval(request.getIntervalSeconds());
+		}
+		if (request.getTimeoutMs() != null) {
+			monitor.changeTimeout(request.getTimeoutMs());
+		}
+		if (request.hasExpectedStatus()) {
+			monitor.changeExpectedStatus(request.getExpectedStatus());
+		}
+		return monitor;
+	}
+
+	@Transactional
+	public Monitor pause(UUID userId, UUID monitorId) {
+		Monitor monitor = find(userId, monitorId);
+		monitor.pause();
+		return monitor;
+	}
+
+	@Transactional
+	public Monitor resume(UUID userId, UUID monitorId) {
+		Monitor monitor = find(userId, monitorId);
+		monitor.resume(clock.instant());
+		return monitor;
+	}
+
+	@Transactional
+	public void delete(UUID userId, UUID monitorId) {
+		monitors.delete(find(userId, monitorId));
+		log.info("monitor.deleted monitor_id={} user_id={}", monitorId, userId);
+	}
+
+	/** Another user's monitor gives the same 404 as one that doesn't exist, so ids can't be probed. */
+	private Monitor find(UUID userId, UUID monitorId) {
+		return monitors.findByIdAndUserId(monitorId, userId)
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Monitor not found."));
+	}
+
+	private void checkUrlIsSafe(String url) {
+		try {
+			ssrfGuard.check(url);
+		}
+		catch (UnsafeUrlException ex) {
+			throw new FieldValidationException("url", ex.getMessage());
+		}
+	}
+
+}

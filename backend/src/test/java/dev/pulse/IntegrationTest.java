@@ -10,16 +10,19 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
+import dev.pulse.support.FakeDns;
+import dev.pulse.support.TestUsers;
+
 /**
  * The full app on a random port, against real Postgres and Redis in Docker,
- * with MockMvc for calling the API. All integration tests share one context
- * (and one pair of containers), so the suite stays fast.
+ * with MockMvc for calling the API and fake DNS. All integration tests share
+ * one context (and one pair of containers), so the suite stays fast.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
-@Import(TestcontainersConfiguration.class)
+@Import({ TestcontainersConfiguration.class, FakeDns.class, TestUsers.class })
 @ActiveProfiles("test")
 public @interface IntegrationTest {
 }

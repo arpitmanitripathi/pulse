@@ -252,6 +252,10 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-10 | Reusing an already-rotated refresh token revokes all of that user's refresh tokens | A reused token means it was probably stolen; standard refresh-token reuse detection |
 | 2026-11-10 | Passwords: 10 characters minimum, 72 bytes maximum | BCrypt only reads the first 72 bytes; Spring Security rejects longer input |
 | 2026-11-10 | M1 also delivers `GET /api/me`, Swagger UI and the problem+json error handler | Needed to test auth by hand before the frontend exists |
+| 2026-11-10 | Changing a monitor's URL, or resuming it, resets it to UNKNOWN with zero counters and checks it right away | Old results describe a different target or an old period; M4 closes any open incident when this happens |
+| 2026-11-10 | The 20-monitor limit is enforced under a row lock on the user (409 when reached) | Two parallel creates at 19 must not end at 21 |
+| 2026-11-10 | SSRF guard also rejects URLs with user:password@, hostnames that don't resolve, and reserved ranges (198.18/15, 240/4, 192.0.0/24, IPv6 fc00::/7) | user@host is a classic way to disguise the real host; unresolvable URLs are a typo the user should see at once |
+| 2026-11-10 | The monitor list gets its 24 h uptime field in M6 | Uptime comes from check results and rollups, which do not exist before M3 and M6 |
 
 ## Parking lot (ideas for after v1, not built now)
 -
