@@ -8,7 +8,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * Real PostgreSQL and Redis for tests, same major versions as production (PLAN.md).
+ * Real PostgreSQL and Redis for tests, same major versions as production (docs/DESIGN.md).
  * Spring wires the connection details in through {@link ServiceConnection}.
  */
 @TestConfiguration(proxyBeanMethods = false)

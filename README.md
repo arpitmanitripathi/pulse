@@ -3,7 +3,7 @@
 Uptime monitoring with incident detection, one alert per incident, LLM-written incident summaries
 and public status pages.
 
-> Work in progress. The build plan is in [PLAN.md](PLAN.md).
+> Work in progress. How it works and why: [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Status
 

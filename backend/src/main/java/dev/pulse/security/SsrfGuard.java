@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
  * make our server fetch the cloud provider's secret metadata, or scan our own
  * internal services.
  *
- * <p>Rules (PLAN.md, "SSRF protection"):
+ * <p>Rules (docs/DESIGN.md, "SSRF protection"):
  * <ul>
  * <li>scheme http or https; a host; no user:password@ part</li>
  * <li>port 80, 443 or 1024-65535</li>

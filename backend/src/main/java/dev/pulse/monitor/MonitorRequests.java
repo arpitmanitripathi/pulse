@@ -8,7 +8,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-/** Request bodies for the monitor API, with the limits from PLAN.md. */
+/** Request bodies for the monitor API, with the limits from docs/DESIGN.md. */
 public final class MonitorRequests {
 
 	static final String NAME_SIZE = "Name must be 1 to 100 characters.";
