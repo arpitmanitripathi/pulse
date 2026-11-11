@@ -20,7 +20,7 @@ This document is the reference for how it works and why. Decisions are recorded 
 | HTTP checks | Apache HttpClient 5 on virtual threads, with a DNS resolver that only returns SSRF-approved addresses |
 | Email | Spring Mail over SMTP. Dev: Mailpit container |
 | Chat alerts | Slack and Discord incoming webhooks |
-| AI | Any OpenAI-compatible Chat Completions API (default: Google Gemini, free tier), set by `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`; behind an `IncidentSummarizer` interface. No key → summaries are skipped, everything else works |
+| AI | Any OpenAI-compatible Chat Completions API (default: Google Gemini `gemini-3.5-flash-lite`, free tier), set by `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`; behind an `IncidentSummarizer` interface. No key → summaries are skipped, everything else works |
 | API docs | springdoc OpenAPI at `/swagger-ui` |
 | Errors | RFC 9457 `application/problem+json` |
 | Frontend | React + Vite + TypeScript, React Router, Recharts, Tailwind |
@@ -282,3 +282,4 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-11 | The summarizer speaks the OpenAI-compatible Chat Completions format, Gemini by default | Gemini has a free tier; the same format works for Gemini, Groq, OpenRouter, GitHub Models and Anthropic, so the provider is a config change |
 | 2026-11-11 | No API key → incidents are marked SKIPPED (migration V3); old incidents are not summarised later | Pulse must work fully without AI; explaining an old outage is not useful |
 | 2026-11-11 | Summaries use a lease column (`summary_next_attempt_at`) instead of holding a row lock during the call | A lock held for a 10 s AI call would block the check processor from resolving that incident |
+| 2026-11-12 | Default model `gemini-3.5-flash-lite`, pinned (not a `-latest` alias) | Tested with a real key: `gemini-2.5-flash` is closed to new users; larger Flash models took 10–60 s; this one answered in 1.6–6 s with accurate summaries. A pinned name can't silently change behaviour |

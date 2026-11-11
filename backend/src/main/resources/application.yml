@@ -69,5 +69,5 @@ pulse:
     # Any OpenAI-compatible Chat Completions API. Default: Google Gemini (free tier).
     base-url: ${AI_BASE_URL:https://generativelanguage.googleapis.com/v1beta/openai}
     api-key: ${AI_API_KEY:}        # empty = AI summaries are skipped
-    model: ${AI_MODEL:gemini-2.5-flash}
+    model: ${AI_MODEL:gemini-3.5-flash-lite}
     timeout: 10s
