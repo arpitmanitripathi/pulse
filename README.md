@@ -15,7 +15,7 @@ and public status pages.
 | M3 Scheduler + checker | ✅ |
 | M4 Incidents + alerts | ✅ |
 | M5 AI summary | ✅ |
-| M6 Stats + status page | ⏳ |
+| M6 Stats + status page | ✅ |
 | M7 Frontend | ⏳ |
 | M8 Load test | ⏳ |
 | M9 Ship | ⏳ |
