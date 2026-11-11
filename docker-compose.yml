@@ -43,6 +43,10 @@ services:
       COOKIE_SECURE: "false"   # plain http on localhost; production uses true
       SMTP_HOST: mailpit
       SMTP_PORT: 1025
+      # Read from ./.env (git-ignored). Empty = AI summaries are skipped.
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai}
+      AI_MODEL: ${AI_MODEL:-gemini-2.5-flash}
     ports:
       - "8080:8080"
     depends_on:
