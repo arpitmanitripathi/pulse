@@ -24,7 +24,10 @@ public class FakeDns {
 			"localhost", new String[] { "127.0.0.1" },
 			"internal.test", new String[] { "10.0.0.5" },
 			"metadata.test", new String[] { "169.254.169.254" },
-			"mixed.test", new String[] { "93.184.216.34", "10.0.0.5" });
+			"mixed.test", new String[] { "93.184.216.34", "10.0.0.5" },
+			"hooks.slack.com", new String[] { "54.230.0.10" },
+			"discord.com", new String[] { "162.159.128.233" },
+			"discordapp.com", new String[] { "162.159.129.233" });
 
 	@Bean
 	@Primary
