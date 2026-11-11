@@ -138,7 +138,7 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
-			<!-- Coverage: CI fails below 80 % line coverage (PLAN.md) -->
+			<!-- Coverage: CI fails below 80 % line coverage (docs/DESIGN.md) -->
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>

@@ -1,34 +1,26 @@
-# Pulse — Final Build Plan
+# Pulse — Design
 
-## Goal
-An uptime monitoring service built as a complete backend project:
-register a URL → checked every 30–300 s → incident opened after repeated failures →
-one alert per incident (email, Slack, Discord) → LLM-written incident summary →
-public status page with uptime % and latency. Deployed live on AWS.
-Simple enough to explain every part in an interview.
+Pulse is an uptime monitor. You register a URL; it is checked every 30–300 s; after repeated failures
+an incident opens; each alert channel (email, Slack, Discord) gets exactly one DOWN and one RECOVERED
+message per incident; an LLM writes a short summary of what went wrong; and a public status page shows
+uptime and latency.
 
-## Rules for building (read before every session)
-1. **This file is the source of truth.** If something is not written here, it is not built.
-2. **New ideas go to the Parking lot** at the bottom. They are not built until v1 is finished.
-3. **A decision changes only by editing this file first**, with the date and the reason, in the Change log.
-4. **One milestone at a time, in order.** A milestone is finished only when every Done-when box is ticked.
-5. **One branch per milestone** (`m3-scheduler`), merged into `main` through a PR with CI green.
-6. **No milestone ends with failing or skipped tests.**
+This document is the reference for how it works and why. Decisions are recorded at the end.
 
-## Final decisions
+## Tech stack
 
-| Topic | Decision |
+| Topic | Choice |
 |---|---|
 | Language | Java 21 (virtual threads) |
-| Framework | Spring Boot 4.x, latest stable at M0, version pinned in `pom.xml` |
+| Framework | Spring Boot 4.x, version pinned in `pom.xml` |
 | Build | Maven |
 | Database | PostgreSQL 17, schema managed by Flyway migrations |
 | Cache / rate limit | Redis 7 |
 | Auth | Email + password (BCrypt). Access JWT (15 min) + refresh token (7 days, httpOnly cookie, stored hashed, rotated on use) |
 | HTTP checks | Java `HttpClient` on virtual threads |
-| Email | Spring Mail over SMTP. Dev: Mailpit container. Prod: free SMTP provider, chosen at M9 |
+| Email | Spring Mail over SMTP. Dev: Mailpit container |
 | Chat alerts | Slack and Discord incoming webhooks |
-| AI | Anthropic API via the official Java SDK, model `claude-haiku-5-5`, behind a `IncidentSummarizer` interface |
+| AI | Anthropic API via the official Java SDK, model `claude-haiku-5-5`, behind an `IncidentSummarizer` interface |
 | API docs | springdoc OpenAPI at `/swagger-ui` |
 | Errors | RFC 9457 `application/problem+json` |
 | Frontend | React + Vite + TypeScript, React Router, Recharts, Tailwind |
@@ -38,7 +30,6 @@ Simple enough to explain every part in an interview.
 | CI | GitHub Actions: backend `mvn verify`, frontend lint + test + build, Docker build |
 | Local run | `docker compose up` (app, Postgres, Redis, Mailpit) |
 | Deployment | One AWS EC2 instance, Docker Compose, Caddy for HTTPS |
-| Load test | Custom Java harness + WireMock target, results in `BENCHMARK.md` |
 
 ## Fixed numbers
 
@@ -60,6 +51,7 @@ Simple enough to explain every part in an interview.
 | Rate limit, public API | 60 requests / min / IP |
 | Rate limit, auth API | 10 requests / min / IP |
 | Per user | 20 monitors, 5 alert channels, 3 status pages |
+| Passwords | 10 characters to 72 bytes |
 | Check User-Agent | `PulseMonitor/1.0` |
 
 ## Architecture
@@ -81,6 +73,27 @@ Spring Boot app  (1..N identical instances)
 ```
 One deployable app. No microservices, no message broker: PostgreSQL coordinates the instances.
 
+## Code structure
+
+Every request goes Controller (DTO validation) → Service (rules, `@Transactional`) → Repository → PostgreSQL.
+CRUD uses Spring Data JPA. The claim queries (`FOR UPDATE SKIP LOCKED`) use `JdbcTemplate` with explicit SQL.
+`IncidentStateMachine` is plain Java with no Spring and no database, so it is unit-tested directly.
+No database transaction is ever held open during an HTTP check.
+
+| Package | Components |
+|---|---|
+| `auth` | `AuthController`, `MeController`, `AuthService`, `JwtService`, `UserRepository`, `RefreshTokenRepository` (JWTs are checked by Spring Security's built-in bearer-token filter) |
+| `monitor` | `MonitorController`, `MonitorService`, `MonitorRepository` |
+| `security` | `SecurityConfig`, `SsrfGuard`, `HostResolver`, `RateLimiter` + `RateLimitFilter` (Redis fixed window) |
+| `check` | `SchedulerLoop`, `MonitorClaimer`, `HttpChecker`, `CheckResultProcessor`, `CheckResultRepository` |
+| `incident` | `IncidentStateMachine`, `IncidentService`, `IncidentController`, `IncidentRepository` |
+| `alert` | `AlertChannelController`, `AlertOutboxDispatcher`, `AlertSender` → `EmailSender`, `SlackSender`, `DiscordSender` |
+| `ai` | `IncidentSummarizer` → `AnthropicSummarizer`, `FakeSummarizer` (tests), `SummaryWorker` |
+| `stats` | `StatsService`, `StatsController`, `RollupRepository` |
+| `statuspage` | `StatusPageController`, `PublicStatusController`, `StatusPageService` (Redis cache) |
+| `jobs` | `RollupJob`, `RetentionJob`, `AdvisoryLock` |
+| `common` | `ApiExceptionHandler` (problem+json), `ClockConfig` (time is injected so tests control it), `OpenApiConfig` |
+
 ## Data model (Flyway)
 
 | Table | Columns |
@@ -97,9 +110,10 @@ One deployable app. No microservices, no message broker: PostgreSQL coordinates 
 | `status_page_monitors` | status_page_id, monitor_id, position |
 
 Indexes: `monitors(next_check_at) WHERE active`, `check_results(monitor_id, checked_at)`,
-`alert_outbox(next_attempt_at) WHERE sent_at IS NULL`, `incidents(monitor_id, opened_at)`.
+`alert_outbox(next_attempt_at) WHERE sent_at IS NULL`, `incidents(monitor_id, opened_at)`,
+and a unique partial index so a monitor has at most one open incident.
 
-## Flows (exactly what happens)
+## Flows
 
 **A. Add monitor.** Validate → SSRF check → insert with `next_check_at = now()`, `state = UNKNOWN`.
 
@@ -132,11 +146,30 @@ The prompt allows only the data given; no guessing about infrastructure.
 Hourly at :05: roll up the previous hour. Daily at 03:00 UTC: delete raw checks > 7 days and rollups > 90 days.
 The last 24 h of stats read raw checks; anything older reads rollups.
 
-## SSRF protection
-Allowed schemes: `http`, `https`. Ports 80, 443 and 1024–65535.
-Blocked after DNS resolution: loopback, private (10/8, 172.16/12, 192.168/16), link-local
-(169.254/16, including cloud metadata), CGNAT 100.64/10, 0.0.0.0/8, multicast, and the IPv6 equivalents.
-Applied to monitor URLs **and** webhook URLs, both when saved and at request time.
+## Security
+
+**Authentication.** Passwords are BCrypt hashes. A wrong password and an unknown email return the same
+401 and take the same time. Access tokens are HS256 JWTs (15 min). Refresh tokens are 256 random bits,
+stored only as a SHA-256 hash, sent as an `httpOnly; Secure; SameSite=Strict; Path=/api/auth` cookie and
+rotated on every use. Presenting an already-rotated token ends every session of that user.
+
+**Authorisation.** Every user-owned resource is filtered by the logged-in user; another user's id
+returns **404**, not 403, so ids can't be probed.
+
+**SSRF protection.** Applied to monitor URLs and webhook URLs, when saved and again at request time.
+- Scheme `http` or `https`; no `user:password@` part; ports 80, 443 or 1024–65535.
+- Every address the host resolves to must be public, following IANA's special-purpose address registries.
+  When unsure, refuse.
+  - IPv4 blocked: 0.0.0.0/8, loopback 127/8, private (10/8, 172.16/12, 192.168/16), link-local 169.254/16
+    (including cloud metadata), CGNAT 100.64/10, 192.0.0/24, documentation (192.0.2/24, 198.51.100/24,
+    203.0.113/24), 192.88.99/24, 198.18/15, multicast, 240/4.
+  - IPv6 is an allow-list: only global unicast 2000::/3, minus 2001::/23 (IETF assignments, including
+    Teredo), 2001:db8::/32 (documentation) and 2002::/16 (6to4). Everything else, including NAT64
+    64:ff9b::/96 and IPv4-mapped addresses, is refused.
+- A hostname that doesn't resolve is rejected.
+
+**Rate limits.** Redis fixed window per IP on `/api/auth/**` and `/api/public/**`. If Redis is down,
+requests are allowed rather than blocked.
 
 ## API
 
@@ -156,35 +189,12 @@ Applied to monitor URLs **and** webhook URLs, both when saved and at request tim
 | GET | `/api/public/status/{slug}` | Public status page data |
 | GET | `/actuator/health` | Health |
 
-Every user-owned resource is filtered by the logged-in user; another user's id returns **404**, not 403.
-
 ## Frontend pages
 `/login`, `/register` · `/monitors` (list: state, 24 h uptime, latency sparkline) · `/monitors/new` ·
 `/monitors/:id` (latency chart, uptime, recent checks, incidents) · `/incidents/:id` (timeline + AI summary) ·
 `/alerts` (channels + test button) · `/status-pages` · public `/s/:slug`.
 
-## Code structure (key components)
-
-Every request goes Controller (DTO validation) → Service (rules, `@Transactional`) → Repository → PostgreSQL.
-CRUD uses Spring Data JPA. The claim queries (`FOR UPDATE SKIP LOCKED`) use `JdbcTemplate` with explicit SQL.
-`IncidentStateMachine` is plain Java with no Spring and no database, so it is unit-tested directly.
-No database transaction is ever held open during an HTTP check.
-
-| Package | Components |
-|---|---|
-| `auth` | `AuthController`, `MeController`, `AuthService`, `JwtService`, `UserRepository`, `RefreshTokenRepository` (JWTs are checked by Spring Security's built-in bearer-token filter) |
-| `monitor` | `MonitorController`, `MonitorService`, `MonitorRepository` |
-| `security` | `SsrfGuard`, `RateLimiter` (Redis fixed window), `SecurityConfig` |
-| `check` | `SchedulerLoop`, `MonitorClaimer`, `HttpChecker`, `CheckResultProcessor`, `CheckResultRepository` |
-| `incident` | `IncidentStateMachine`, `IncidentService`, `IncidentController`, `IncidentRepository` |
-| `alert` | `AlertChannelController`, `AlertOutboxDispatcher`, `AlertSender` → `EmailSender`, `SlackSender`, `DiscordSender` |
-| `ai` | `IncidentSummarizer` → `AnthropicSummarizer`, `FakeSummarizer` (tests), `SummaryWorker` |
-| `stats` | `StatsService`, `StatsController`, `RollupRepository` |
-| `statuspage` | `StatusPageController`, `PublicStatusController`, `StatusPageService` (Redis cache) |
-| `jobs` | `RollupJob`, `RetentionJob`, `AdvisoryLock` |
-| `common` | `ProblemDetailsHandler`, `Clock` bean (time is injected so tests control it) |
-
-## Deployment shape
+## Deployment
 One domain. Caddy serves the built React files and proxies `/api/*` to the app, so there is no CORS.
 GitHub Actions builds the Docker image, pushes it to GitHub Container Registry, then SSHes into EC2 and runs
 `docker compose pull && docker compose up -d`. Postgres and Redis run as containers on the same instance, with a volume for Postgres.
@@ -197,61 +207,42 @@ pulse/
   frontend/     React app
   loadtest/     load-test harness
   deploy/       docker-compose.prod.yml, Caddyfile, deploy notes
-  docs/         architecture diagram, screenshots
+  docs/         this document, architecture diagram, screenshots
   docker-compose.yml   local stack
-  PLAN.md  README.md  BENCHMARK.md
+  README.md  BENCHMARK.md
 ```
 
-## Tests that must exist
+## Testing strategy
 - **State machine:** table-driven unit tests for every transition (UNKNOWN/UP/DOWN × success/failure × counter values).
-- **Scheduler:** Testcontainers test with **two schedulers on one database**; 200 due monitors; assert each is checked exactly once.
+- **Scheduler:** Testcontainers test with **two schedulers on one database**; 200 due monitors; each is checked exactly once.
 - **Outbox:** duplicate insert rejected; retry backoff timing; RECOVERED is never sent before DOWN.
 - **Checker:** WireMock for 200, 503, slow (timeout), redirect chain, and connection refused.
-- **SSRF:** every blocked range, IPv6, a hostname resolving to a private IP.
+- **SSRF:** every blocked range, IPv6, a hostname resolving to a private IP (fake DNS, no internet needed).
 - **AI:** fake summarizer; Anthropic down → incident and alert still created, summary FAILED.
 - **API:** auth required; cross-user access returns 404; validation errors return problem+json.
 - **Jobs:** rollup values against hand-computed numbers; retention deletes only old rows.
 - **Frontend:** monitor list, create form validation, status page render.
 
-## Milestones
-
-| # | Milestone | Done when |
-|---|---|---|
-| M0 | Setup | Repo + Maven project + compose stack (Postgres, Redis, Mailpit) + Flyway V1 + CI green + README skeleton |
-| M1 | Auth | Register, login, refresh rotation, logout; BCrypt; auth rate limit; tests green |
-| M2 | Monitors | CRUD, pause/resume, per-user limits, SSRF validator; tests green |
-| M3 | Scheduler + checker | `SKIP LOCKED` claim, virtual-thread checks, results stored; two-scheduler test green |
-| M4 | Incidents + alerts | State machine, outbox, email/Slack/Discord, retries, test-alert endpoint; tests green |
-| M5 | AI summary | Summarizer with timeout and fallback; summary on the incident API; tests green |
-| M6 | Stats + status page | Rollups, retention, stats API, public status API with Redis cache + rate limit; tests green |
-| M7 | Frontend | All pages above, wired to the API; frontend tests green |
-| M8 | Load test | 1,000 monitors at 60 s for 30 min on 1 instance, then 2 instances; `BENCHMARK.md` filled in |
-| M9 | Ship | EC2 + Caddy HTTPS live, monitoring PhishLens's live demo, README with screenshots, architecture diagram, demo link |
-
-## Load test (M8)
+## Load test method
 Target: WireMock with 50 ms latency and a 2 % error rate. 1,000 monitors at 60 s, 30 min.
-Measure: scheduler lag (actual check time − scheduled time) p50 / p95 / p99, missed checks %,
-CPU and memory, then the same with 2 instances (no double checks). Record the real numbers; no target is promised in advance.
+Measured: scheduler lag (actual check time − scheduled time) p50 / p95 / p99, missed checks %,
+CPU and memory, then the same with 2 instances (no double checks). Results go in `BENCHMARK.md`.
 
-## Out of scope for v1
+## Not in v1
 Keyword/content checks · SSL-expiry checks · TCP/ping/DNS monitors · multiple probe regions ·
 teams/organisations · billing · SMS/phone alerts · OAuth login · custom status-page domains ·
 mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafana.
 
-## Resume entry (numbers filled in from BENCHMARK.md)
-**Pulse — Uptime Monitor** | Java, Spring Boot, PostgreSQL, Redis, React, AWS
-- Built an uptime monitoring service that checks [N] endpoints per minute on one instance with p95 scheduling delay of [X] s, using Java 21 virtual threads
-- Designed incident detection with failure thresholds and exactly-once alerting via a transactional outbox, safe across multiple instances
-- Added LLM-written incident summaries that never delay or block alerts
+## Decisions
 
-## Change log
-| Date | Change | Reason |
+| Date | Decision | Why |
 |---|---|---|
-| 2026-11-10 | Plan created | — |
-| 2026-11-10 | JWTs are validated by Spring Security's resource-server support (Nimbus, HS256) instead of a hand-written `JwtAuthFilter` | Less custom security code; the framework's filter is battle-tested |
+| 2026-11-10 | JWTs are validated by Spring Security's resource-server support (Nimbus, HS256), not a hand-written filter | Less custom security code; the framework's filter is battle-tested |
 | 2026-11-10 | Reusing an already-rotated refresh token revokes all of that user's refresh tokens | A reused token means it was probably stolen; standard refresh-token reuse detection |
 | 2026-11-10 | Passwords: 10 characters minimum, 72 bytes maximum | BCrypt only reads the first 72 bytes; Spring Security rejects longer input |
-| 2026-11-10 | M1 also delivers `GET /api/me`, Swagger UI and the problem+json error handler | Needed to test auth by hand before the frontend exists |
-
-## Parking lot (ideas for after v1, not built now)
--
+| 2026-11-10 | `GET /api/me`, Swagger UI and the problem+json error handler ship with auth | Auth can be tried by hand before the frontend exists |
+| 2026-11-10 | Changing a monitor's URL, or resuming it, resets it to UNKNOWN with zero counters and checks it right away | Old results describe a different target or an old period; any open incident is closed when this happens |
+| 2026-11-10 | The 20-monitor limit is enforced under a row lock on the user (409 when reached) | Two parallel creates at 19 must not end at 21 |
+| 2026-11-10 | SSRF guard also rejects `user:password@` URLs, hostnames that don't resolve, and extra reserved ranges | `user@host` is a classic way to disguise the real host; an unresolvable URL is a typo the user should see at once |
+| 2026-11-10 | The monitor list's 24 h uptime field comes with the stats work | Uptime is computed from check results and rollups |
+| 2026-11-11 | IPv6 targets must be global unicast (2000::/3) minus 2001::/23, 2001:db8::/32 and 2002::/16; IPv4 documentation and 6to4-relay ranges are blocked | An allow-list fails closed for ranges we didn't think of; NAT64, 6to4 and Teredo can wrap a private IPv4 address |
