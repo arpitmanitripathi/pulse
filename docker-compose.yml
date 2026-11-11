@@ -41,6 +41,8 @@ services:
       REDIS_PORT: 6379
       JWT_SECRET: local-dev-only-secret-change-me-in-production
       COOKIE_SECURE: "false"   # plain http on localhost; production uses true
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
     ports:
       - "8080:8080"
     depends_on:

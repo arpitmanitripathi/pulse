@@ -94,11 +94,14 @@ public class Monitor {
 		this.name = name;
 	}
 
-	void changeUrl(String url, Instant now) {
-		if (!url.equals(this.url)) {
-			this.url = url;
-			resetState(now);
+	/** @return true if the URL changed (and the state was reset) */
+	boolean changeUrl(String url, Instant now) {
+		if (url.equals(this.url)) {
+			return false;
 		}
+		this.url = url;
+		resetState(now);
+		return true;
 	}
 
 	void changeMethod(CheckMethod method) {
@@ -121,11 +124,14 @@ public class Monitor {
 		this.active = false;
 	}
 
-	void resume(Instant now) {
-		if (!active) {
-			this.active = true;
-			resetState(now);
+	/** @return true if it was paused (and the state was reset) */
+	boolean resume(Instant now) {
+		if (active) {
+			return false;
 		}
+		this.active = true;
+		resetState(now);
+		return true;
 	}
 
 	public UUID getId() {

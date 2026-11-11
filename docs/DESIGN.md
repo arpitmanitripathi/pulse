@@ -43,7 +43,9 @@ This document is the reference for how it works and why. Decisions are recorded 
 | Resolve incident after | 2 successful checks in a row |
 | Scheduler tick | every 1 s, claims up to 100 due monitors per tick |
 | Max checks in flight | 500 per instance (semaphore) |
-| Alert retries | 6 attempts, backoff 30 s → 1 m → 2 m → 4 m → 8 m → 16 m |
+| Alert retries | 6 attempts; after attempt n wait 30 s × 2^(n−1) (30 s, 1 m, 2 m, 4 m, 8 m), then give up |
+| Alert send lease | 2 min (a claimed alert is retried if the sender crashes mid-send) |
+| Test alerts | 5 per minute per user |
 | AI input | the last 20 checks of the monitor |
 | AI timeout | 10 s, 1 retry, then marked FAILED (alerting never waits for AI) |
 | Raw check retention | 7 days |
@@ -87,8 +89,8 @@ No database transaction is ever held open during an HTTP check.
 | `monitor` | `MonitorController`, `MonitorService`, `MonitorRepository` |
 | `security` | `SecurityConfig`, `SsrfGuard`, `HostResolver`, `RateLimiter` + `RateLimitFilter` (Redis fixed window) |
 | `check` | `SchedulerLoop`, `MonitorClaimer`, `Checker` → `HttpChecker`, `CheckResultProcessor`, `CheckController` |
-| `incident` | `IncidentStateMachine`, `IncidentService`, `IncidentController`, `IncidentRepository` |
-| `alert` | `AlertChannelController`, `AlertOutboxDispatcher`, `AlertSender` → `EmailSender`, `SlackSender`, `DiscordSender` |
+| `incident` | `IncidentStateMachine`, `IncidentController` (state changes happen in `check.CheckResultProcessor`) |
+| `alert` | `AlertChannelController`, `AlertChannelService`, `AlertOutboxDispatcher`, `AlertSenders` → `EmailSender`, `SlackSender`, `DiscordSender`, `WebhookClient` |
 | `ai` | `IncidentSummarizer` → `AnthropicSummarizer`, `FakeSummarizer` (tests), `SummaryWorker` |
 | `stats` | `StatsService`, `StatsController`, `RollupRepository` |
 | `statuspage` | `StatusPageController`, `PublicStatusController`, `StatusPageService` (Redis cache) |
@@ -133,10 +135,15 @@ Insert `check_results` → update counters →
 - `UP/UNKNOWN` and failures reach 3 → `DOWN`, insert incident (summary PENDING), insert one DOWN outbox row per channel.
 - `DOWN` and successes reach 2 → `UP`, set `resolved_at`, insert one RECOVERED outbox row per channel.
 - `UNKNOWN` and first success → `UP` (no alert).
+- DOWN alerts go to every channel the user has; RECOVERED alerts only to channels that got the DOWN alert.
+- A result whose URL no longer matches the monitor (changed during the check) is dropped.
 
-**E. Alert dispatcher (every 5 s).** Claim due unsent outbox rows with `SKIP LOCKED` → send →
-`sent_at` on success, otherwise `attempts + 1` and the next backoff. After 6 failures it stops and keeps `last_error`.
-The unique key makes a duplicate alert impossible.
+**E. Alert dispatcher (every 5 s).** Claim up to 50 due unsent outbox rows with `SKIP LOCKED`, add 1 to `attempts`
+and push `next_attempt_at` 2 minutes out (a lease), commit → send each on a virtual thread with no transaction open →
+`sent_at` on success, otherwise `next_attempt_at = now + 30 s × 2^(attempts−1)` and `last_error`. After 6 attempts it stops.
+A RECOVERED alert waits until that channel's DOWN alert was sent or given up, so it never arrives first.
+The unique key allows one DOWN and one RECOVERED row per incident and channel. Delivery is at-least-once:
+a crash between sending and recording `sent_at` can send that one message again.
 
 **F. AI summary (every 5 s).** Claim PENDING incidents with `SKIP LOCKED` → send the monitor details
 and last 20 checks → save the text (max 400 characters). Shown on the dashboard only, never on the public page.
@@ -171,6 +178,10 @@ returns **404**, not 403, so ids can't be probed.
     64:ff9b::/96 and IPv4-mapped addresses, is refused.
 - A hostname that doesn't resolve is rejected.
 
+**Webhooks.** Slack targets must be `https://hooks.slack.com/services/…`; Discord targets
+`https://discord.com/api/webhooks/…` (or `discordapp.com`). They still pass the SSRF guard when saved and when sent.
+A webhook URL works like a password, so the API only ever returns it masked.
+
 **Rate limits.** Redis fixed window per IP on `/api/auth/**` and `/api/public/**`. If Redis is down,
 requests are allowed rather than blocked.
 
@@ -185,9 +196,9 @@ requests are allowed rather than blocked.
 | POST | `/api/monitors/{id}/pause` · `/resume` | Pause / resume |
 | GET | `/api/monitors/{id}/checks` | Raw checks, last 24 h, paginated |
 | GET | `/api/monitors/{id}/stats?window=24h\|7d\|30d` | Uptime %, p50 / p95 latency, series |
-| GET | `/api/incidents?monitorId=&status=` · `/api/incidents/{id}` | Incidents + AI summary |
-| GET, POST, DELETE | `/api/alert-channels` (`/{id}`) | Channels |
-| POST | `/api/alert-channels/{id}/test` | Send a test alert |
+| GET | `/api/incidents?monitorId=&status=open\|resolved` · `/api/incidents/{id}` | Incidents (newest first, max 100) · one incident with its alert deliveries and AI summary |
+| GET, POST, DELETE | `/api/alert-channels` (`/{id}`) | Channels (max 5; webhook URLs masked) |
+| POST | `/api/alert-channels/{id}/test` | Send a test alert now (200, or 502 with the reason) |
 | GET, POST, PATCH, DELETE | `/api/status-pages` (`/{id}`) | Status pages |
 | GET | `/api/public/status/{slug}` | Public status page data |
 | GET | `/actuator/health` | Health |
@@ -255,3 +266,12 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-11 | Latency is time to the status line; the response body is never downloaded | Measures what users feel when a site is slow, and a huge or endless body can't tie up the checker |
 | 2026-11-11 | `GET /api/monitors/{id}/checks` ships with the checker: newest first, last 24 h, `page`/`size` (max 200) and `hasMore` | Results must be visible as soon as they exist; `hasMore` avoids a count query |
 | 2026-11-11 | The scheduler can be switched off with `pulse.scheduler.enabled=false` (off in tests) | Tests drive the scheduler by hand so they are deterministic |
+| 2026-11-11 | Alerts are claimed with a 2-minute lease and sent outside any transaction; delivery is at-least-once | Holding a row lock during a 10 s webhook call would block other work; a rare repeat message is better than a lost one |
+| 2026-11-11 | RECOVERED goes only to channels that got the DOWN alert, and waits until that DOWN was sent or given up | "Recovered" about an outage you never heard of is noise; it must never arrive before "down" |
+| 2026-11-11 | Slack and Discord targets must be on the provider's official webhook host, over HTTPS | The strongest SSRF rule is to allow only the hosts we actually need |
+| 2026-11-11 | Webhook URLs are shown masked in API responses | Anyone with the URL can post to the channel |
+| 2026-11-11 | Changing a monitor's URL or resuming it closes its open incident without a RECOVERED alert | Nothing recovered: the user changed what is monitored |
+| 2026-11-11 | A check result whose URL no longer matches the monitor is dropped | It describes the old target |
+| 2026-11-11 | The test-alert endpoint sends directly (not through the outbox), max 5 per minute per user | The user is waiting for an answer; the limit stops it being used to spam an inbox |
+| 2026-11-11 | The incidents API ships with incidents (M4), including alert delivery status per channel | Incidents must be visible as soon as they exist; delivery status explains a missing alert |
+| 2026-11-11 | The health endpoint does not check the email server | An SMTP outage would mark a working app unhealthy and could get it restarted; alert retries already cover it |

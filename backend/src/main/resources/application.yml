@@ -21,6 +21,15 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}          # Mailpit locally
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.connectiontimeout: 10000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
 
 server:
   shutdown: graceful
@@ -33,6 +42,9 @@ management:
   endpoint:
     health:
       show-details: never
+  health:
+    mail:
+      enabled: false   # an email outage must not mark the app unhealthy; alerts retry on their own
 
 springdoc:
   swagger-ui:
@@ -51,3 +63,5 @@ pulse:
     enabled: ${SCHEDULER_ENABLED:true}
     batch-size: 100        # monitors claimed per tick
     max-in-flight: 500     # checks running at once on this instance
+  alerts:
+    mail-from: ${ALERT_MAIL_FROM:Pulse <alerts@pulse.local>}

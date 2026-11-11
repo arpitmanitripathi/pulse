@@ -1,12 +1,16 @@
 package dev.pulse.monitor;
 
 import java.time.Clock;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,12 +33,15 @@ public class MonitorService {
 	private final MonitorRepository monitors;
 	private final UserRepository users;
 	private final SsrfGuard ssrfGuard;
+	private final JdbcTemplate jdbc;
 	private final Clock clock;
 
-	public MonitorService(MonitorRepository monitors, UserRepository users, SsrfGuard ssrfGuard, Clock clock) {
+	public MonitorService(MonitorRepository monitors, UserRepository users, SsrfGuard ssrfGuard, JdbcTemplate jdbc,
+			Clock clock) {
 		this.monitors = monitors;
 		this.users = users;
 		this.ssrfGuard = ssrfGuard;
+		this.jdbc = jdbc;
 		this.clock = clock;
 	}
 
@@ -72,7 +79,9 @@ public class MonitorService {
 		Monitor monitor = find(userId, monitorId);
 		if (request.getUrl() != null) {
 			checkUrlIsSafe(request.getUrl());
-			monitor.changeUrl(request.getUrl(), clock.instant());
+			if (monitor.changeUrl(request.getUrl(), clock.instant())) {
+				closeOpenIncident(monitor.getId());
+			}
 		}
 		if (request.getName() != null) {
 			monitor.rename(request.getName());
@@ -102,7 +111,9 @@ public class MonitorService {
 	@Transactional
 	public Monitor resume(UUID userId, UUID monitorId) {
 		Monitor monitor = find(userId, monitorId);
-		monitor.resume(clock.instant());
+		if (monitor.resume(clock.instant())) {
+			closeOpenIncident(monitor.getId());
+		}
 		return monitor;
 	}
 
@@ -110,6 +121,19 @@ public class MonitorService {
 	public void delete(UUID userId, UUID monitorId) {
 		monitors.delete(find(userId, monitorId));
 		log.info("monitor.deleted monitor_id={} user_id={}", monitorId, userId);
+	}
+
+	/**
+	 * Ends an open incident without a RECOVERED alert: nothing recovered, the user
+	 * changed what is monitored (or restarted it after a pause).
+	 */
+	private void closeOpenIncident(java.util.UUID monitorId) {
+		Instant now = clock.instant();
+		int closed = jdbc.update("UPDATE incidents SET resolved_at = ? WHERE monitor_id = ? AND resolved_at IS NULL",
+				OffsetDateTime.ofInstant(now, ZoneOffset.UTC), monitorId);
+		if (closed > 0) {
+			log.info("incident.closed_by_change monitor_id={}", monitorId);
+		}
 	}
 
 	/** Another user's monitor gives the same 404 as one that doesn't exist, so ids can't be probed. */
