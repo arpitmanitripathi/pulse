@@ -14,7 +14,7 @@ and public status pages.
 | M2 Monitors | ✅ |
 | M3 Scheduler + checker | ✅ |
 | M4 Incidents + alerts | ✅ |
-| M5 AI summary | ⏳ |
+| M5 AI summary | ✅ |
 | M6 Stats + status page | ⏳ |
 | M7 Frontend | ⏳ |
 | M8 Load test | ⏳ |
@@ -25,7 +25,7 @@ and public status pages.
 Requirements: Docker, Java 21.
 
 ```bash
-docker compose up --build        # app on :8080, Postgres :5433, Redis :6380, Mailpit inbox :8025
+docker compose up --build        # app on :8080 (PULSE_PORT=8081 to change), Postgres :5433, Redis :6380, Mailpit :8025
 curl localhost:8080/actuator/health
 ```
 

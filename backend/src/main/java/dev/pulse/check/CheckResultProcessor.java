@@ -79,8 +79,9 @@ public class CheckResultProcessor {
 
 	private void openIncident(UUID monitorId, CheckOutcome outcome, OffsetDateTime at) {
 		UUID incidentId = jdbc.queryForObject("""
-				INSERT INTO incidents (monitor_id, opened_at, first_error_type) VALUES (?, ?, ?) RETURNING id
-				""", UUID.class, monitorId, at, outcome.errorType().name());
+				INSERT INTO incidents (monitor_id, opened_at, first_error_type, summary_next_attempt_at)
+				VALUES (?, ?, ?, ?) RETURNING id
+				""", UUID.class, monitorId, at, outcome.errorType().name(), at); // summary due now, on the app's clock
 		int alerts = jdbc.update("""
 				INSERT INTO alert_outbox (incident_id, channel_id, kind, next_attempt_at)
 				SELECT ?, c.id, 'DOWN', ?

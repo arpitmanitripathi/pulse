@@ -20,7 +20,7 @@ This document is the reference for how it works and why. Decisions are recorded 
 | HTTP checks | Apache HttpClient 5 on virtual threads, with a DNS resolver that only returns SSRF-approved addresses |
 | Email | Spring Mail over SMTP. Dev: Mailpit container |
 | Chat alerts | Slack and Discord incoming webhooks |
-| AI | Anthropic API via the official Java SDK, model `claude-haiku-5-5`, behind an `IncidentSummarizer` interface |
+| AI | Any OpenAI-compatible Chat Completions API (default: Google Gemini `gemini-3.5-flash-lite`, free tier), set by `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`; behind an `IncidentSummarizer` interface. No key → summaries are skipped, everything else works |
 | API docs | springdoc OpenAPI at `/swagger-ui` |
 | Errors | RFC 9457 `application/problem+json` |
 | Frontend | React + Vite + TypeScript, React Router, Recharts, Tailwind |
@@ -47,7 +47,8 @@ This document is the reference for how it works and why. Decisions are recorded 
 | Alert send lease | 2 min (a claimed alert is retried if the sender crashes mid-send) |
 | Test alerts | 5 per minute per user |
 | AI input | the last 20 checks of the monitor |
-| AI timeout | 10 s, 1 retry, then marked FAILED (alerting never waits for AI) |
+| AI timeout | 10 s; one retry after 30 s, then FAILED (alerting never waits for AI) |
+| AI summary length | at most 400 characters, plain text |
 | Raw check retention | 7 days |
 | Hourly rollup retention | 90 days |
 | Status page cache | 30 s in Redis |
@@ -91,7 +92,7 @@ No database transaction is ever held open during an HTTP check.
 | `check` | `SchedulerLoop`, `MonitorClaimer`, `Checker` → `HttpChecker`, `CheckResultProcessor`, `CheckController` |
 | `incident` | `IncidentStateMachine`, `IncidentController` (state changes happen in `check.CheckResultProcessor`) |
 | `alert` | `AlertChannelController`, `AlertChannelService`, `AlertOutboxDispatcher`, `AlertSenders` → `EmailSender`, `SlackSender`, `DiscordSender`, `WebhookClient` |
-| `ai` | `IncidentSummarizer` → `AnthropicSummarizer`, `FakeSummarizer` (tests), `SummaryWorker` |
+| `ai` | `IncidentSummarizer` → `OpenAiCompatibleSummarizer`, `SummaryWorker`, `SummaryTrigger` |
 | `stats` | `StatsService`, `StatsController`, `RollupRepository` |
 | `statuspage` | `StatusPageController`, `PublicStatusController`, `StatusPageService` (Redis cache) |
 | `jobs` | `RollupJob`, `RetentionJob`, `AdvisoryLock` |
@@ -105,7 +106,7 @@ No database transaction is ever held open during an HTTP check.
 | `refresh_tokens` | id, user_id, token_hash, expires_at, revoked_at |
 | `monitors` | id, user_id, name, url, method (GET/HEAD), interval_s, timeout_ms, expected_status (null), active, **state** (UP/DOWN/UNKNOWN), consecutive_failures, consecutive_successes, **next_check_at**, last_checked_at, created_at |
 | `check_results` | id, monitor_id, checked_at, success, status_code (null), latency_ms, error_type (NONE/TIMEOUT/DNS/TLS/CONNECTION/STATUS/BLOCKED), error_message |
-| `incidents` | id, monitor_id, opened_at, resolved_at (null), first_error_type, **summary**, summary_status (PENDING/DONE/FAILED), summary_attempts |
+| `incidents` | id, monitor_id, opened_at, resolved_at (null), first_error_type, **summary**, summary_status (PENDING/DONE/FAILED/SKIPPED), summary_attempts, summary_next_attempt_at |
 | `alert_channels` | id, user_id, type (EMAIL/SLACK/DISCORD), target, name, created_at |
 | `alert_outbox` | id, incident_id, channel_id, kind (DOWN/RECOVERED), attempts, next_attempt_at, sent_at, last_error · **unique (incident_id, channel_id, kind)** |
 | `hourly_rollups` | monitor_id, hour, checks, failures, latency_p50, latency_p95 · primary key (monitor_id, hour) |
@@ -145,9 +146,12 @@ A RECOVERED alert waits until that channel's DOWN alert was sent or given up, so
 The unique key allows one DOWN and one RECOVERED row per incident and channel. Delivery is at-least-once:
 a crash between sending and recording `sent_at` can send that one message again.
 
-**F. AI summary (every 5 s).** Claim PENDING incidents with `SKIP LOCKED` → send the monitor details
-and last 20 checks → save the text (max 400 characters). Shown on the dashboard only, never on the public page.
-The prompt allows only the data given; no guessing about infrastructure.
+**F. AI summary (every 5 s).** If no API key is set, every PENDING incident becomes SKIPPED and nothing is sent.
+Otherwise claim up to 10 PENDING incidents with `SKIP LOCKED` and a 1-minute lease (`summary_next_attempt_at`),
+commit → send the monitor's name, URL and last 20 checks with no transaction open → save the text (max 400
+characters) as DONE. On failure retry once after 30 s, then FAILED. Shown on the dashboard only, never on the
+public page. The prompt allows only the data given; no guessing about infrastructure. The output is plain text
+and is always displayed as text, never as HTML.
 
 **G. Public status page.** `GET /api/public/status/{slug}` → current state, uptime 24 h / 7 d / 30 d,
 90 daily bars, hourly latency for 24 h, incidents for 30 days. Built from rollups, cached in Redis for 30 s. No AI text, no URLs.
@@ -275,3 +279,7 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-11 | The test-alert endpoint sends directly (not through the outbox), max 5 per minute per user | The user is waiting for an answer; the limit stops it being used to spam an inbox |
 | 2026-11-11 | The incidents API ships with incidents (M4), including alert delivery status per channel | Incidents must be visible as soon as they exist; delivery status explains a missing alert |
 | 2026-11-11 | The health endpoint does not check the email server | An SMTP outage would mark a working app unhealthy and could get it restarted; alert retries already cover it |
+| 2026-11-11 | The summarizer speaks the OpenAI-compatible Chat Completions format, Gemini by default | Gemini has a free tier; the same format works for Gemini, Groq, OpenRouter, GitHub Models and Anthropic, so the provider is a config change |
+| 2026-11-11 | No API key → incidents are marked SKIPPED (migration V3); old incidents are not summarised later | Pulse must work fully without AI; explaining an old outage is not useful |
+| 2026-11-11 | Summaries use a lease column (`summary_next_attempt_at`) instead of holding a row lock during the call | A lock held for a 10 s AI call would block the check processor from resolving that incident |
+| 2026-11-12 | Default model `gemini-3.5-flash-lite`, pinned (not a `-latest` alias) | Tested with a real key: `gemini-2.5-flash` is closed to new users; larger Flash models took 10–60 s; this one answered in 1.6–6 s with accurate summaries. A pinned name can't silently change behaviour |
