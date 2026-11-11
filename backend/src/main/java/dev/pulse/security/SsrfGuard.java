@@ -8,7 +8,9 @@ import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Predicate;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -29,35 +31,64 @@ import org.springframework.stereotype.Component;
 @Component
 public class SsrfGuard {
 
-	private final HostResolver resolver;
+	static final String PRIVATE_ADDRESS = "This URL points to a private or reserved network address, "
+			+ "which Pulse does not check.";
 
+	private final HostResolver resolver;
+	private final Predicate<InetAddress> allowedAddress;
+
+	@Autowired
 	public SsrfGuard(HostResolver resolver) {
-		this.resolver = resolver;
+		this(resolver, SsrfGuard::isPublic);
 	}
 
-	/** Returns the parsed URL and its (all public) addresses, or throws with a reason a user can act on. */
-	public SafeUrl check(String url) {
-		URI uri = parse(url);
-		String host = uri.getHost();
-		checkPort(uri);
+	/** For tests that need a fake website on 127.0.0.1; production always uses {@link #isPublic}. */
+	public SsrfGuard(HostResolver resolver, Predicate<InetAddress> allowedAddress) {
+		this.resolver = resolver;
+		this.allowedAddress = allowedAddress;
+	}
 
-		InetAddress[] addresses;
+	/** Full check: URL rules plus DNS. Returns the parsed URL and its (all allowed) addresses. */
+	public SafeUrl check(String url) {
+		URI uri = validateUrl(url);
+		String host = uri.getHost();
 		try {
-			addresses = resolver.resolve(stripBrackets(host));
+			return new SafeUrl(uri, List.of(resolvePublic(host)));
+		}
+		catch (BlockedAddressException ex) {
+			throw new UnsafeUrlException(PRIVATE_ADDRESS);
 		}
 		catch (UnknownHostException ex) {
 			throw new UnsafeUrlException("The hostname \"" + host + "\" could not be found.");
 		}
+	}
+
+	/** URL rules only (scheme, host, no user info, port). No DNS lookup. */
+	public URI validateUrl(String url) {
+		URI uri = parse(url);
+		checkPort(uri);
+		return uri;
+	}
+
+	/**
+	 * Resolves a hostname and returns its addresses only if every one of them
+	 * is allowed. The checker's HTTP client uses this as its DNS resolver, so a
+	 * connection can only ever be opened to an address that passed this check.
+	 *
+	 * @throws BlockedAddressException if any address is private or reserved
+	 * @throws UnknownHostException if the name does not resolve
+	 */
+	public InetAddress[] resolvePublic(String host) throws UnknownHostException {
+		InetAddress[] addresses = resolver.resolve(stripBrackets(host));
 		if (addresses.length == 0) {
-			throw new UnsafeUrlException("The hostname \"" + host + "\" could not be found.");
+			throw new UnknownHostException(host);
 		}
 		for (InetAddress address : addresses) {
-			if (!isPublic(address)) {
-				throw new UnsafeUrlException("This URL points to a private or reserved network address, "
-						+ "which Pulse does not check.");
+			if (!allowedAddress.test(address)) {
+				throw new BlockedAddressException(host);
 			}
 		}
-		return new SafeUrl(uri, List.of(addresses));
+		return addresses;
 	}
 
 	private static URI parse(String url) {
@@ -98,7 +129,7 @@ public class SsrfGuard {
 	 * special-purpose address registries: anything not globally reachable is
 	 * refused. When unsure, refuse.
 	 */
-	static boolean isPublic(InetAddress address) {
+	public static boolean isPublic(InetAddress address) {
 		if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()
 				|| address.isSiteLocalAddress() || address.isMulticastAddress()) {
 			return false;
@@ -137,6 +168,15 @@ public class SsrfGuard {
 	}
 
 	public record SafeUrl(URI uri, List<InetAddress> addresses) {
+	}
+
+	/** A name resolved, but to an address Pulse must not connect to. */
+	public static class BlockedAddressException extends UnknownHostException {
+
+		public BlockedAddressException(String host) {
+			super(host + " resolves to a private or reserved address");
+		}
+
 	}
 
 	public static class UnsafeUrlException extends RuntimeException {

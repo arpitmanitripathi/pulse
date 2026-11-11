@@ -1,3 +1,5 @@
 pulse:
   auth:
     jwt-secret: test-only-secret-that-is-long-enough-1234567890
+  scheduler:
+    enabled: false   # tests drive the scheduler by hand
