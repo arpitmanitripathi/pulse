@@ -26,7 +26,9 @@ class SsrfGuardTest {
 			"http://172.32.0.1/",       // just above it
 			"http://100.63.255.255/",   // just below 100.64.0.0/10
 			"http://100.128.0.1/",      // just above it
-			"https://[2606:2800:220:1:248:1893:25c8:1946]/" })
+			"https://[2606:2800:220:1:248:1893:25c8:1946]/",
+			"https://[2001:4860:4860::8888]/",   // public IPv6 that starts with 2001
+			"https://[2001:200::1]/" })          // just past 2001::/23
 	void publicUrlsAreAllowed(String url) {
 		assertThat(guard.check(url).addresses()).isNotEmpty();
 	}
@@ -57,6 +59,17 @@ class SsrfGuardTest {
 			"http://[ff02::1]/",
 			"http://[::ffff:127.0.0.1]/",   // IPv4-mapped IPv6 of loopback
 			"http://[::ffff:10.0.0.1]/",
+			"http://192.0.2.1/",            // documentation ranges
+			"http://198.51.100.7/",
+			"http://203.0.113.9/",
+			"http://192.88.99.1/",          // old 6to4 relay
+			"http://[64:ff9b::a00:5]/",     // NAT64 wrapping 10.0.0.5
+			"http://[64:ff9b::808:808]/",   // NAT64 wrapping a public IP: still not plain public IPv6
+			"http://[2002:a00:5::1]/",      // 6to4 wrapping 10.0.0.5
+			"http://[2001::1]/",            // Teredo tunnel
+			"http://[2001:db8::1]/",        // IPv6 documentation
+			"http://[100::1]/",             // IPv6 discard range
+			"http://[::a00:5]/",            // old IPv4-compatible form of 10.0.0.5
 			"http://internal.test/",        // public-looking name, private address
 			"http://metadata.test/",
 			"http://mixed.test/" })         // one public and one private address

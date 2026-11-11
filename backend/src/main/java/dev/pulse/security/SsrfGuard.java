@@ -93,7 +93,11 @@ public class SsrfGuard {
 		return host.startsWith("[") && host.endsWith("]") ? host.substring(1, host.length() - 1) : host;
 	}
 
-	/** True only for addresses on the public internet. */
+	/**
+	 * True only for addresses on the public internet. Based on IANA's
+	 * special-purpose address registries: anything not globally reachable is
+	 * refused. When unsure, refuse.
+	 */
 	static boolean isPublic(InetAddress address) {
 		if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()
 				|| address.isSiteLocalAddress() || address.isMulticastAddress()) {
@@ -101,17 +105,33 @@ public class SsrfGuard {
 		}
 		byte[] b = address.getAddress();
 		if (address instanceof Inet4Address) {
-			int first = b[0] & 0xff;
-			int second = b[1] & 0xff;
-			return !(first == 0                                   // 0.0.0.0/8 "this network"
-					|| (first == 100 && second >= 64 && second <= 127) // 100.64.0.0/10 carrier-grade NAT
-					|| (first == 192 && second == 0 && (b[2] & 0xff) == 0) // 192.0.0.0/24 protocol assignments
-					|| (first == 198 && (second == 18 || second == 19))  // 198.18.0.0/15 benchmarking
-					|| first >= 240);                                  // 240.0.0.0/4 reserved + broadcast
+			int a0 = b[0] & 0xff;
+			int a1 = b[1] & 0xff;
+			int a2 = b[2] & 0xff;
+			return !(a0 == 0                                     // 0.0.0.0/8 "this network"
+					|| (a0 == 100 && a1 >= 64 && a1 <= 127)       // 100.64.0.0/10 carrier-grade NAT
+					|| (a0 == 192 && a1 == 0 && a2 == 0)          // 192.0.0.0/24 protocol assignments
+					|| (a0 == 192 && a1 == 0 && a2 == 2)          // 192.0.2.0/24 documentation
+					|| (a0 == 192 && a1 == 88 && a2 == 99)        // 192.88.99.0/24 old 6to4 relay
+					|| (a0 == 198 && (a1 == 18 || a1 == 19))      // 198.18.0.0/15 benchmarking
+					|| (a0 == 198 && a1 == 51 && a2 == 100)       // 198.51.100.0/24 documentation
+					|| (a0 == 203 && a1 == 0 && a2 == 113)        // 203.0.113.0/24 documentation
+					|| a0 >= 240);                                // 240.0.0.0/4 reserved + broadcast
 		}
 		if (address instanceof Inet6Address) {
-			int first = b[0] & 0xff;
-			return (first & 0xfe) != 0xfc;                             // fc00::/7 unique local
+			int a0 = b[0] & 0xff;
+			int a1 = b[1] & 0xff;
+			int a2 = b[2] & 0xff;
+			int a3 = b[3] & 0xff;
+			// Allow-list: real public IPv6 is all inside 2000::/3. This alone refuses
+			// NAT64 (64:ff9b::), IPv4-compatible (::a.b.c.d), discard (100::), unique local (fc00::/7), ...
+			if ((a0 & 0xe0) != 0x20) {
+				return false;
+			}
+			boolean ietfAssignments = a0 == 0x20 && a1 == 0x01 && a2 <= 0x01;          // 2001::/23 (incl. Teredo 2001::/32)
+			boolean documentation = a0 == 0x20 && a1 == 0x01 && a2 == 0x0d && a3 == 0xb8; // 2001:db8::/32
+			boolean sixToFour = a0 == 0x20 && a1 == 0x02;                              // 2002::/16 wraps an IPv4 address
+			return !(ietfAssignments || documentation || sixToFour);
 		}
 		return false;
 	}

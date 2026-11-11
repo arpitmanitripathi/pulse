@@ -158,10 +158,14 @@ returns **404**, not 403, so ids can't be probed.
 
 **SSRF protection.** Applied to monitor URLs and webhook URLs, when saved and again at request time.
 - Scheme `http` or `https`; no `user:password@` part; ports 80, 443 or 1024–65535.
-- Every address the host resolves to must be public. Blocked: loopback, 0.0.0.0/8, private
-  (10/8, 172.16/12, 192.168/16), link-local (169.254/16, including cloud metadata), CGNAT 100.64/10,
-  192.0.0/24, 198.18/15, multicast, 240/4, and the IPv6 equivalents (::1, fe80::/10, fc00::/7,
-  multicast, IPv4-mapped addresses).
+- Every address the host resolves to must be public, following IANA's special-purpose address registries.
+  When unsure, refuse.
+  - IPv4 blocked: 0.0.0.0/8, loopback 127/8, private (10/8, 172.16/12, 192.168/16), link-local 169.254/16
+    (including cloud metadata), CGNAT 100.64/10, 192.0.0/24, documentation (192.0.2/24, 198.51.100/24,
+    203.0.113/24), 192.88.99/24, 198.18/15, multicast, 240/4.
+  - IPv6 is an allow-list: only global unicast 2000::/3, minus 2001::/23 (IETF assignments, including
+    Teredo), 2001:db8::/32 (documentation) and 2002::/16 (6to4). Everything else, including NAT64
+    64:ff9b::/96 and IPv4-mapped addresses, is refused.
 - A hostname that doesn't resolve is rejected.
 
 **Rate limits.** Redis fixed window per IP on `/api/auth/**` and `/api/public/**`. If Redis is down,
@@ -241,3 +245,4 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-10 | The 20-monitor limit is enforced under a row lock on the user (409 when reached) | Two parallel creates at 19 must not end at 21 |
 | 2026-11-10 | SSRF guard also rejects `user:password@` URLs, hostnames that don't resolve, and extra reserved ranges | `user@host` is a classic way to disguise the real host; an unresolvable URL is a typo the user should see at once |
 | 2026-11-10 | The monitor list's 24 h uptime field comes with the stats work | Uptime is computed from check results and rollups |
+| 2026-11-11 | IPv6 targets must be global unicast (2000::/3) minus 2001::/23, 2001:db8::/32 and 2002::/16; IPv4 documentation and 6to4-relay ranges are blocked | An allow-list fails closed for ranges we didn't think of; NAT64, 6to4 and Teredo can wrap a private IPv4 address |
