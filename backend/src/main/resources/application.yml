@@ -47,3 +47,7 @@ pulse:
   rate-limit:
     auth-per-minute: 10
     public-per-minute: 60
+  scheduler:
+    enabled: ${SCHEDULER_ENABLED:true}
+    batch-size: 100        # monitors claimed per tick
+    max-in-flight: 500     # checks running at once on this instance

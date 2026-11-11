@@ -12,7 +12,7 @@ and public status pages.
 | M0 Setup | ✅ |
 | M1 Auth | ✅ |
 | M2 Monitors | ✅ |
-| M3 Scheduler + checker | ⏳ |
+| M3 Scheduler + checker | ✅ |
 | M4 Incidents + alerts | ⏳ |
 | M5 AI summary | ⏳ |
 | M6 Stats + status page | ⏳ |

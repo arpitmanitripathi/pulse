@@ -17,7 +17,7 @@ This document is the reference for how it works and why. Decisions are recorded 
 | Database | PostgreSQL 17, schema managed by Flyway migrations |
 | Cache / rate limit | Redis 7 |
 | Auth | Email + password (BCrypt). Access JWT (15 min) + refresh token (7 days, httpOnly cookie, stored hashed, rotated on use) |
-| HTTP checks | Java `HttpClient` on virtual threads |
+| HTTP checks | Apache HttpClient 5 on virtual threads, with a DNS resolver that only returns SSRF-approved addresses |
 | Email | Spring Mail over SMTP. Dev: Mailpit container |
 | Chat alerts | Slack and Discord incoming webhooks |
 | AI | Anthropic API via the official Java SDK, model `claude-haiku-5-5`, behind an `IncidentSummarizer` interface |
@@ -37,7 +37,8 @@ This document is the reference for how it works and why. Decisions are recorded 
 |---|---|
 | Check intervals allowed | 30, 60, 120, 300 s |
 | Check timeout | 1–10 s, default 5 s |
-| Success | Final status 200–299 (or exactly `expected_status` if set); redirects followed, max 5 |
+| Success | Final status 200–299 (or exactly `expected_status` if set); redirects followed, max 5 (not followed when `expected_status` is 3xx) |
+| Latency | Time from start until the response status line arrives (DNS + connect + TLS + server time); the body is never downloaded |
 | Open incident after | 3 failed checks in a row |
 | Resolve incident after | 2 successful checks in a row |
 | Scheduler tick | every 1 s, claims up to 100 due monitors per tick |
@@ -85,7 +86,7 @@ No database transaction is ever held open during an HTTP check.
 | `auth` | `AuthController`, `MeController`, `AuthService`, `JwtService`, `UserRepository`, `RefreshTokenRepository` (JWTs are checked by Spring Security's built-in bearer-token filter) |
 | `monitor` | `MonitorController`, `MonitorService`, `MonitorRepository` |
 | `security` | `SecurityConfig`, `SsrfGuard`, `HostResolver`, `RateLimiter` + `RateLimitFilter` (Redis fixed window) |
-| `check` | `SchedulerLoop`, `MonitorClaimer`, `HttpChecker`, `CheckResultProcessor`, `CheckResultRepository` |
+| `check` | `SchedulerLoop`, `MonitorClaimer`, `Checker` → `HttpChecker`, `CheckResultProcessor`, `CheckController` |
 | `incident` | `IncidentStateMachine`, `IncidentService`, `IncidentController`, `IncidentRepository` |
 | `alert` | `AlertChannelController`, `AlertOutboxDispatcher`, `AlertSender` → `EmailSender`, `SlackSender`, `DiscordSender` |
 | `ai` | `IncidentSummarizer` → `AnthropicSummarizer`, `FakeSummarizer` (tests), `SummaryWorker` |
@@ -101,7 +102,7 @@ No database transaction is ever held open during an HTTP check.
 | `users` | id (UUID), email (unique, lower-case), password_hash, created_at |
 | `refresh_tokens` | id, user_id, token_hash, expires_at, revoked_at |
 | `monitors` | id, user_id, name, url, method (GET/HEAD), interval_s, timeout_ms, expected_status (null), active, **state** (UP/DOWN/UNKNOWN), consecutive_failures, consecutive_successes, **next_check_at**, last_checked_at, created_at |
-| `check_results` | id, monitor_id, checked_at, success, status_code (null), latency_ms, error_type (NONE/TIMEOUT/DNS/TLS/CONNECTION/STATUS), error_message |
+| `check_results` | id, monitor_id, checked_at, success, status_code (null), latency_ms, error_type (NONE/TIMEOUT/DNS/TLS/CONNECTION/STATUS/BLOCKED), error_message |
 | `incidents` | id, monitor_id, opened_at, resolved_at (null), first_error_type, **summary**, summary_status (PENDING/DONE/FAILED), summary_attempts |
 | `alert_channels` | id, user_id, type (EMAIL/SLACK/DISCORD), target, name, created_at |
 | `alert_outbox` | id, incident_id, channel_id, kind (DOWN/RECOVERED), attempts, next_attempt_at, sent_at, last_error · **unique (incident_id, channel_id, kind)** |
@@ -122,8 +123,10 @@ and a unique partial index so a monitor has at most one open incident.
 → set `next_check_at = next_check_at + interval` (if that is still in the past, `now() + interval`) → commit → submit each to the Checker.
 If an instance dies after claiming, that monitor misses one check. Accepted.
 
-**C. Check.** Resolve DNS → re-run the SSRF check on the resolved IP (stops DNS rebinding) →
-send the request → classify the result → hand it to the Incident engine.
+**C. Check.** Validate the URL → resolve DNS through the SSRF-checking resolver, so the connection can only
+go to an approved public address (stops DNS rebinding, and there is no gap between "checked" and "connected") →
+send the request without downloading the body → on a redirect, run the same checks on the new URL (max 5) →
+classify the result: NONE, TIMEOUT, DNS, TLS, CONNECTION, STATUS or BLOCKED → hand it to the Incident engine.
 
 **D. Incident engine (one transaction, monitor row locked).**
 Insert `check_results` → update counters →
@@ -246,3 +249,9 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-10 | SSRF guard also rejects `user:password@` URLs, hostnames that don't resolve, and extra reserved ranges | `user@host` is a classic way to disguise the real host; an unresolvable URL is a typo the user should see at once |
 | 2026-11-10 | The monitor list's 24 h uptime field comes with the stats work | Uptime is computed from check results and rollups |
 | 2026-11-11 | IPv6 targets must be global unicast (2000::/3) minus 2001::/23, 2001:db8::/32 and 2002::/16; IPv4 documentation and 6to4-relay ranges are blocked | An allow-list fails closed for ranges we didn't think of; NAT64, 6to4 and Teredo can wrap a private IPv4 address |
+| 2026-11-11 | Checks use Apache HttpClient 5 instead of the JDK `HttpClient` | It accepts a custom DNS resolver, so the checker connects only to addresses the SSRF guard approved; the JDK client always resolves on its own |
+| 2026-11-11 | Every redirect target goes through the SSRF guard; redirects are not followed when `expected_status` is 3xx | A public site can redirect to a private address; a user expecting a 301 wants to see the 301 |
+| 2026-11-11 | New error type BLOCKED (migration V2) for checks refused by the SSRF guard | Users should see why a check failed; DNS and CONNECTION would be misleading |
+| 2026-11-11 | Latency is time to the status line; the response body is never downloaded | Measures what users feel when a site is slow, and a huge or endless body can't tie up the checker |
+| 2026-11-11 | `GET /api/monitors/{id}/checks` ships with the checker: newest first, last 24 h, `page`/`size` (max 200) and `hasMore` | Results must be visible as soon as they exist; `hasMore` avoids a count query |
+| 2026-11-11 | The scheduler can be switched off with `pulse.scheduler.enabled=false` (off in tests) | Tests drive the scheduler by hand so they are deterministic |
