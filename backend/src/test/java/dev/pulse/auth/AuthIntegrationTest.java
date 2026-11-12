@@ -259,6 +259,15 @@ class AuthIntegrationTest {
 		assertThat(limited.getResponse().getContentType()).isEqualTo("application/problem+json");
 	}
 
+	@Test
+	void refreshIsNotRateLimitedBecauseTheAppCallsItOnEveryPageLoad() throws Exception {
+		for (int i = 0; i < 25; i++) {
+			mvc.perform(post("/api/auth/refresh")).andExpect(status().isUnauthorized()); // never 429
+		}
+		register();
+		login(); // the login allowance was not used up by refreshes
+	}
+
 	// ---------- helpers ----------
 
 	private void register() throws Exception {

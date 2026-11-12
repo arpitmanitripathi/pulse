@@ -4,3 +4,6 @@
 *.iml
 .vscode/
 PLAN.md
+node_modules/
+frontend/dist/
+frontend/coverage/

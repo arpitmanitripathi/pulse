@@ -23,11 +23,11 @@ This document is the reference for how it works and why. Decisions are recorded 
 | AI | Any OpenAI-compatible Chat Completions API (default: Google Gemini `gemini-3.5-flash-lite`, free tier), set by `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`; behind an `IncidentSummarizer` interface. No key → summaries are skipped, everything else works |
 | API docs | springdoc OpenAPI at `/swagger-ui` |
 | Errors | RFC 9457 `application/problem+json` |
-| Frontend | React + Vite + TypeScript, React Router, Recharts, Tailwind |
+| Frontend | React 19 + Vite + TypeScript 6.0, React Router, Recharts, Tailwind 4; data loading with small hooks on `fetch` (no extra library) |
 | Backend tests | JUnit 5, AssertJ, Testcontainers (Postgres, Redis), WireMock, MockMvc |
 | Frontend tests | Vitest + Testing Library |
 | Coverage | JaCoCo ≥ 80 % lines on the backend, enforced in CI |
-| CI | GitHub Actions: backend `mvn verify`, frontend lint + test + build, Docker build |
+| CI | GitHub Actions: backend `mvn verify`, frontend lint + test + build (Node 24), Docker build |
 | Local run | `docker compose up` (app, Postgres, Redis, Mailpit) |
 | Deployment | One AWS EC2 instance, Docker Compose, Caddy for HTTPS |
 
@@ -53,7 +53,7 @@ This document is the reference for how it works and why. Decisions are recorded 
 | Hourly rollup retention | 90 days |
 | Status page cache | 30 s in Redis |
 | Rate limit, public API | 60 requests / min / IP |
-| Rate limit, auth API | 10 requests / min / IP |
+| Rate limit, login + register | 10 requests / min / IP |
 | Per user | 20 monitors, 5 alert channels, 3 status pages |
 | Passwords | 10 characters to 72 bytes |
 | Check User-Agent | `PulseMonitor/1.0` |
@@ -202,8 +202,9 @@ returns **404**, not 403, so ids can't be probed.
 `https://discord.com/api/webhooks/…` (or `discordapp.com`). They still pass the SSRF guard when saved and when sent.
 A webhook URL works like a password, so the API only ever returns it masked.
 
-**Rate limits.** Redis fixed window per IP on `/api/auth/**` and `/api/public/**`. If Redis is down,
-requests are allowed rather than blocked.
+**Rate limits.** Redis fixed window per IP on login + register (10 / min, shared) and `/api/public/**`
+(60 / min). Refresh and logout are not limited: the refresh token can't be guessed, and the app calls refresh
+on every page load. If Redis is down, requests are allowed rather than blocked.
 
 ## API
 
@@ -225,8 +226,22 @@ requests are allowed rather than blocked.
 
 ## Frontend pages
 `/login`, `/register` · `/monitors` (list: state, 24 h uptime, latency sparkline) · `/monitors/new` ·
-`/monitors/:id` (latency chart, uptime, recent checks, incidents) · `/incidents/:id` (timeline + AI summary) ·
-`/alerts` (channels + test button) · `/status-pages` · public `/s/:slug`.
+`/monitors/:id` (latency chart, uptime, recent checks, incidents; edit, pause/resume, delete) ·
+`/incidents/:id` (timeline + AI summary) · `/alerts` (channels + test button) ·
+`/status-pages` (create, edit, delete, link to the public page) · public `/s/:slug`.
+
+**Session in the browser.** The access token lives only in memory (a script injected into the page can't
+find it in `localStorage`). On load the app calls `/api/auth/refresh`; the httpOnly cookie brings the session
+back. An API call that gets 401 refreshes once and retries. Refreshes are single-flight inside a tab and
+serialised across tabs with the Web Locks API, because two tabs presenting the same refresh token at once
+would trip reuse detection and end every session. The public page `/s/:slug` never touches the session.
+
+**Data.** Logged-in pages reload their data every 30 s. Times are shown in the browser's time zone; the
+90 daily bars are UTC days and say so. The AI summary is rendered as plain text (React escapes it; no
+raw HTML anywhere).
+
+**Local development.** `npm run dev` in `frontend/` serves the app on :5173 and proxies `/api` to the backend
+(`PULSE_API`, default `http://localhost:8080`), so the browser sees one origin, exactly as behind Caddy.
 
 ## Deployment
 One domain. Caddy serves the built React files and proxies `/api/*` to the app, so there is no CORS.
@@ -310,3 +325,10 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-12 | Status page slugs: 3–40 of `a–z 0–9 -`, not starting or ending with `-`, unique across all users (409 if taken) | The slug is the public address; uniqueness is global |
 | 2026-11-12 | A status page may only list the owner's monitors (400 otherwise); its cache is cleared after the change commits | Another user's id must not be usable or probable; clearing before commit could re-cache the old version |
 | 2026-11-12 | The public page shows names, state, uptime, latency and incident times only | It is anonymous: URLs, ids, error messages and AI text can reveal internals |
+| 2026-11-12 | TypeScript 6.0, not 7 | typescript-eslint supports TypeScript up to 6.0; the linter must understand the compiler's version |
+| 2026-11-12 | Access token in memory only; session restored from the refresh cookie on load | A token in `localStorage` can be read by any script that runs on the page |
+| 2026-11-12 | Token refresh is single-flight per tab and locked across tabs (Web Locks) | Parallel refreshes with one cookie look like a stolen token and would log the user out everywhere |
+| 2026-11-12 | Data loading with small hooks on `fetch`, polling every 30 s; no data-fetching library | Few screens, simple needs; less to learn and explain |
+| 2026-11-12 | The monitor list gets each sparkline from `/stats?window=24h` (one call per monitor, max 20) | Reuses the stats API; 20 small calls every 30 s is fine at this scale |
+| 2026-11-12 | Monitor editing happens on the monitor's page, status page editing on `/status-pages` | Fewer routes; the form is the same component as for creating |
+| 2026-11-12 | The auth rate limit covers login and register only, not refresh or logout | Found in the browser test: every page load refreshes the session, so 10 page loads a minute logged a user out; a 256-bit refresh token can't be guessed, so limiting it protected nothing |

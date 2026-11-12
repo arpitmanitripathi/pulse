@@ -13,8 +13,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
- * Limits requests per client IP: /api/auth/** (password guessing) and
- * /api/public/** (anonymous traffic). Other endpoints need a login and are not limited here.
+ * Limits requests per client IP on login and register (password guessing, account spam)
+ * and on /api/public/** (anonymous traffic). Refresh and logout are not limited: their
+ * token is 256 random bits, so there is nothing to guess, and the app calls refresh on
+ * every page load. Other endpoints need a login and are not limited here.
  */
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
@@ -35,7 +37,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 		String path = request.getRequestURI();
 		String name;
 		int limit;
-		if (path.startsWith("/api/auth/")) {
+		if (path.equals("/api/auth/login") || path.equals("/api/auth/register")) {
 			name = "auth";
 			limit = properties.authPerMinute();
 		}
