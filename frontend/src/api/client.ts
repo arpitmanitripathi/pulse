@@ -12,12 +12,15 @@ export class ApiError extends Error {
   readonly status: number
   /** Field name → message, for 400 validation errors. */
   readonly fieldErrors: Record<string, string>
+  /** From the Retry-After header of a 429, in seconds. */
+  readonly retryAfterSeconds: number | undefined
 
-  constructor(status: number, message: string, fieldErrors: Record<string, string> = {}) {
+  constructor(status: number, message: string, fieldErrors: Record<string, string> = {}, retryAfterSeconds?: number) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.fieldErrors = fieldErrors
+    this.retryAfterSeconds = retryAfterSeconds
   }
 }
 
@@ -100,5 +103,6 @@ async function parse<T>(response: Response): Promise<T> {
   if (response.ok) return json as T
   const problem = (json ?? {}) as { detail?: string; title?: string; errors?: Record<string, string> }
   const message = problem.detail ?? problem.title ?? `Request failed (HTTP ${response.status}).`
-  throw new ApiError(response.status, message, problem.errors ?? {})
+  const retryAfter = Number(response.headers.get('Retry-After'))
+  throw new ApiError(response.status, message, problem.errors ?? {}, Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined)
 }

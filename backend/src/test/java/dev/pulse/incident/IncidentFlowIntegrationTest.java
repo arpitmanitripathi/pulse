@@ -1,5 +1,11 @@
 package dev.pulse.incident;
 
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+
+import java.time.OffsetDateTime;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -94,6 +100,7 @@ class IncidentFlowIntegrationTest {
 
 		assertThat(state()).isEqualTo("UP");
 		assertThat(jdbc.queryForObject("SELECT resolved_at IS NOT NULL FROM incidents", Boolean.class)).isTrue();
+		assertThat(resolution()).isEqualTo("RECOVERED");
 		assertThat(outboxKinds()).containsExactly("DOWN", "DOWN", "RECOVERED", "RECOVERED");
 	}
 
@@ -155,6 +162,7 @@ class IncidentFlowIntegrationTest {
 
 		assertThat(jdbc.queryForObject("SELECT count(*) FROM incidents WHERE resolved_at IS NULL", Integer.class))
 			.isZero();
+		assertThat(resolution()).isEqualTo("MONITOR_CHANGED");
 		assertThat(outboxKinds()).containsExactly("DOWN", "DOWN");
 
 		// Same for resume after a pause.
@@ -170,7 +178,43 @@ class IncidentFlowIntegrationTest {
 			.isZero();
 	}
 
+	@Test
+	void pausingClosesTheOpenIncidentThereAndThenWithoutRecovered() throws Exception {
+		fail();
+		fail();
+		fail();
+		Instant beforePause = Instant.now().minusSeconds(1);
+
+		mvc.perform(post("/api/monitors/" + monitorId + "/pause").header("Authorization", alice.bearer()))
+			.andExpect(status().isOk());
+
+		assertThat(resolution()).isEqualTo("MONITOR_CHANGED");
+		Instant closedAt = jdbc.queryForObject("SELECT resolved_at FROM incidents", OffsetDateTime.class).toInstant();
+		assertThat(closedAt).as("closed when paused, not later").isAfter(beforePause);
+		assertThat(outboxKinds()).containsExactly("DOWN", "DOWN"); // nobody is told it recovered
+		String incidentId = jdbc.queryForObject("SELECT id::text FROM incidents", String.class);
+		mvc.perform(get("/api/incidents/" + incidentId).header("Authorization", alice.bearer()))
+			.andExpect(jsonPath("$.resolution").value("MONITOR_CHANGED"));
+	}
+
+	@Test
+	void aResultThatArrivesAfterThePauseIsDropped() {
+		fail();
+		fail();
+		jdbc.update("UPDATE monitors SET active = false WHERE id = ?", monitorId); // paused while a check ran
+
+		fail(); // would have been the third failure
+
+		assertThat(count("check_results")).isEqualTo(2);
+		assertThat(count("incidents")).as("no incident on a paused monitor").isZero();
+		assertThat(jdbc.queryForObject("SELECT consecutive_failures FROM monitors", Integer.class)).isEqualTo(2);
+	}
+
 	// ---------- helpers ----------
+
+	private String resolution() {
+		return jdbc.queryForObject("SELECT resolution FROM incidents ORDER BY opened_at LIMIT 1", String.class);
+	}
 
 	private void fail() {
 		processor.record(claimed(), failure());

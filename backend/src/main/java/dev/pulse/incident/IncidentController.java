@@ -37,7 +37,7 @@ public class IncidentController {
 	static final int LIMIT = 100;
 
 	private static final String SELECT = """
-			SELECT i.id, i.monitor_id, m.name AS monitor_name, i.opened_at, i.resolved_at, i.first_error_type,
+			SELECT i.id, i.monitor_id, m.name AS monitor_name, i.opened_at, i.resolved_at, i.resolution, i.first_error_type,
 			       i.summary, i.summary_status
 			FROM incidents i JOIN monitors m ON m.id = i.monitor_id
 			""";
@@ -69,7 +69,7 @@ public class IncidentController {
 		return jdbc.query(sql.toString(), (rs, i) -> new IncidentResponse(
 				rs.getObject("id", UUID.class), rs.getObject("monitor_id", UUID.class), rs.getString("monitor_name"),
 				rs.getObject("opened_at", OffsetDateTime.class).toInstant(),
-				toInstant(rs.getObject("resolved_at", OffsetDateTime.class)),
+				toInstant(rs.getObject("resolved_at", OffsetDateTime.class)), rs.getString("resolution"),
 				ErrorType.valueOf(rs.getString("first_error_type")), rs.getString("summary"),
 				rs.getString("summary_status"), null), args.toArray());
 	}
@@ -88,7 +88,7 @@ public class IncidentController {
 		return jdbc.query(SELECT + " WHERE i.id = ? AND m.user_id = ?", (rs, i) -> new IncidentResponse(
 				rs.getObject("id", UUID.class), rs.getObject("monitor_id", UUID.class), rs.getString("monitor_name"),
 				rs.getObject("opened_at", OffsetDateTime.class).toInstant(),
-				toInstant(rs.getObject("resolved_at", OffsetDateTime.class)),
+				toInstant(rs.getObject("resolved_at", OffsetDateTime.class)), rs.getString("resolution"),
 				ErrorType.valueOf(rs.getString("first_error_type")), rs.getString("summary"),
 				rs.getString("summary_status"), deliveries), id, CurrentUser.id(jwt))
 			.stream().findFirst()
@@ -99,8 +99,12 @@ public class IncidentController {
 		return value == null ? null : value.toInstant();
 	}
 
-	/** {@code alerts} is only filled in for a single incident. */
+	/**
+	 * {@code resolution}: RECOVERED (2 good checks) or MONITOR_CHANGED (paused, resumed or new URL); null while open.
+	 * {@code alerts} is only filled in for a single incident.
+	 */
 	public record IncidentResponse(UUID id, UUID monitorId, String monitorName, Instant openedAt, Instant resolvedAt,
+			String resolution,
 			ErrorType firstErrorType, String summary, String summaryStatus, List<Delivery> alerts) {
 	}
 

@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
+import type { ComponentProps, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
 import type { ApiError } from '../api/client'
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -14,15 +14,16 @@ export function PageTitle({ children, actions }: { children: ReactNode; actions?
   )
 }
 
-type Variant = 'primary' | 'secondary' | 'danger'
+type Variant = 'primary' | 'secondary' | 'danger' | 'destructive'
 
 const variants: Record<Variant, string> = {
   primary: 'bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-emerald-300',
   secondary: 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:text-slate-400',
   danger: 'border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:text-red-300',
+  destructive: 'bg-red-600 text-white hover:bg-red-700 disabled:bg-red-300',
 }
 
-export function Button({ variant = 'primary', className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+export function Button({ variant = 'primary', className = '', ...props }: ComponentProps<'button'> & { variant?: Variant }) {
   return (
     <button
       type="button"

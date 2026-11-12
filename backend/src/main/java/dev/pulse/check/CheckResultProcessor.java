@@ -43,16 +43,20 @@ public class CheckResultProcessor {
 	@Transactional
 	public void record(ClaimedMonitor monitor, CheckOutcome outcome) {
 		List<Locked> rows = jdbc.query("""
-				SELECT url, state, consecutive_failures, consecutive_successes
+				SELECT url, active, state, consecutive_failures, consecutive_successes
 				FROM monitors WHERE id = ? FOR UPDATE
-				""", (rs, i) -> new Locked(rs.getString("url"), MonitorState.valueOf(rs.getString("state")),
-				rs.getInt("consecutive_failures"), rs.getInt("consecutive_successes")), monitor.id());
+				""", (rs, i) -> new Locked(rs.getString("url"), rs.getBoolean("active"),
+				MonitorState.valueOf(rs.getString("state")), rs.getInt("consecutive_failures"),
+				rs.getInt("consecutive_successes")), monitor.id());
 		if (rows.isEmpty()) {
 			return; // deleted while the check ran
 		}
 		Locked current = rows.get(0);
 		if (!current.url().equals(monitor.url())) {
 			return; // the URL changed while the check ran: this result is about the old target
+		}
+		if (!current.active()) {
+			return; // paused while the check ran: a paused monitor must not change state or open an incident
 		}
 
 		OffsetDateTime at = utc(outcome.checkedAt());
@@ -94,7 +98,8 @@ public class CheckResultProcessor {
 
 	private void resolveIncident(UUID monitorId, OffsetDateTime at) {
 		List<UUID> resolved = jdbc.queryForList("""
-				UPDATE incidents SET resolved_at = ? WHERE monitor_id = ? AND resolved_at IS NULL RETURNING id
+				UPDATE incidents SET resolved_at = ?, resolution = 'RECOVERED'
+				WHERE monitor_id = ? AND resolved_at IS NULL RETURNING id
 				""", UUID.class, at, monitorId);
 		for (UUID incidentId : resolved) {
 			// Only channels that were told "down" are told "recovered".
@@ -112,7 +117,7 @@ public class CheckResultProcessor {
 		return OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
 	}
 
-	private record Locked(String url, MonitorState state, int failures, int successes) {
+	private record Locked(String url, boolean active, MonitorState state, int failures, int successes) {
 	}
 
 }

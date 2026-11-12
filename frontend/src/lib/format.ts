@@ -40,6 +40,12 @@ export function formatInterval(seconds: number): string {
   return seconds < 60 ? `${seconds} s` : `${seconds / 60} min`
 }
 
+/** "Ongoing", "Resolved" (it recovered) or "Closed" (monitoring was paused or changed first). */
+export function incidentStatus(i: { resolvedAt: string | null; resolution: string | null }): 'Ongoing' | 'Resolved' | 'Closed' {
+  if (!i.resolvedAt) return 'Ongoing'
+  return i.resolution === 'MONITOR_CHANGED' ? 'Closed' : 'Resolved'
+}
+
 export const ERROR_LABELS: Record<string, string> = {
   NONE: 'OK',
   TIMEOUT: 'Timeout',

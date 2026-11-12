@@ -16,6 +16,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import dev.pulse.common.ApiException;
 import dev.pulse.monitor.MonitorState;
@@ -73,6 +75,31 @@ public class PublicStatusService {
 		return status;
 	}
 
+	/**
+	 * Clears the cache of every status page that shows this monitor, after the current transaction
+	 * commits. Called when a monitor is changed, paused, resumed or deleted. The slugs are read now,
+	 * because a delete removes the page links.
+	 */
+	public void evictPagesShowing(UUID monitorId) {
+		List<String> slugs = jdbc.queryForList("""
+				SELECT sp.slug FROM status_pages sp JOIN status_page_monitors spm ON spm.status_page_id = sp.id
+				WHERE spm.monitor_id = ?""", String.class, monitorId);
+		if (slugs.isEmpty()) {
+			return;
+		}
+		if (TransactionSynchronizationManager.isSynchronizationActive()) {
+			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+				@Override
+				public void afterCommit() {
+					slugs.forEach(PublicStatusService.this::evict);
+				}
+			});
+		}
+		else {
+			slugs.forEach(this::evict);
+		}
+	}
+
 	void evict(String slug) {
 		try {
 			redis.delete(key(slug));
@@ -115,7 +142,7 @@ public class PublicStatusService {
 		}).toList();
 
 		List<PublicIncident> incidents = jdbc.query("""
-				SELECT m.name, i.opened_at, i.resolved_at
+				SELECT m.name, i.opened_at, i.resolved_at, i.resolution
 				FROM incidents i
 				JOIN status_page_monitors spm ON spm.monitor_id = i.monitor_id AND spm.status_page_id = ?
 				JOIN monitors m ON m.id = i.monitor_id
@@ -124,7 +151,7 @@ public class PublicStatusService {
 				LIMIT ?
 				""", (rs, i) -> new PublicIncident(rs.getString("name"),
 				rs.getObject("opened_at", OffsetDateTime.class).toInstant(),
-				toInstant(rs.getObject("resolved_at", OffsetDateTime.class))), page.getId(),
+				toInstant(rs.getObject("resolved_at", OffsetDateTime.class)), rs.getString("resolution")), page.getId(),
 				OffsetDateTime.ofInstant(now.minus(Duration.ofDays(INCIDENT_DAYS)), ZoneOffset.UTC), MAX_INCIDENTS);
 
 		return new PublicStatus(page.getTitle(), result, incidents, now);
@@ -184,8 +211,11 @@ public class PublicStatusService {
 	public record LatencyPoint(Instant hour, Integer latencyP50, Integer latencyP95) {
 	}
 
-	/** {@code resolvedAt} is null while the incident is ongoing. */
-	public record PublicIncident(String monitorName, Instant openedAt, Instant resolvedAt) {
+	/**
+	 * {@code resolvedAt} is null while the incident is ongoing. {@code resolution}: RECOVERED, or
+	 * MONITOR_CHANGED when monitoring was paused or moved before it recovered.
+	 */
+	public record PublicIncident(String monitorName, Instant openedAt, Instant resolvedAt, String resolution) {
 	}
 
 }

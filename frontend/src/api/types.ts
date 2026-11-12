@@ -72,6 +72,8 @@ export interface MonitorStats {
   series: StatsPoint[]
 }
 
+export type Resolution = 'RECOVERED' | 'MONITOR_CHANGED'
+
 export type SummaryStatus = 'PENDING' | 'DONE' | 'FAILED' | 'SKIPPED'
 
 export interface Delivery {
@@ -90,6 +92,8 @@ export interface Incident {
   monitorName: string
   openedAt: string
   resolvedAt: string | null
+  /** Why it closed: it recovered, or the monitor was paused, resumed or got a new URL. Null while open. */
+  resolution: Resolution | null
   firstErrorType: ErrorType
   summary: string | null
   summaryStatus: SummaryStatus
@@ -117,7 +121,7 @@ export interface StatusPage {
 export interface PublicStatus {
   title: string
   monitors: PublicMonitor[]
-  incidents: { monitorName: string; openedAt: string; resolvedAt: string | null }[]
+  incidents: { monitorName: string; openedAt: string; resolvedAt: string | null; resolution: Resolution | null }[]
   generatedAt: string
 }
 

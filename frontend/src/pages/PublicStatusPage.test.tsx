@@ -17,8 +17,9 @@ const page: PublicStatus = {
     { name: 'Website', state: 'UP', uptime24h: 100, uptime7d: 100, uptime30d: null, days: days(100), latency24h: [] },
   ],
   incidents: [
-    { monitorName: 'API', openedAt: '2026-11-12T09:30:00Z', resolvedAt: null },
-    { monitorName: 'Website', openedAt: '2026-11-01T09:30:00Z', resolvedAt: '2026-11-01T09:42:00Z' },
+    { monitorName: 'API', openedAt: '2026-11-12T09:30:00Z', resolvedAt: null, resolution: null },
+    { monitorName: 'Website', openedAt: '2026-11-01T09:30:00Z', resolvedAt: '2026-11-01T09:42:00Z', resolution: 'RECOVERED' },
+    { monitorName: 'Docs', openedAt: '2026-10-30T09:00:00Z', resolvedAt: '2026-10-30T09:05:00Z', resolution: 'MONITOR_CHANGED' },
   ],
 }
 
@@ -41,7 +42,8 @@ describe('public status page', () => {
 
     const site = screen.getByRole('heading', { name: 'Website' }).closest('li')!
     expect(within(site).getAllByText('—')).toHaveLength(2) // no 30 d data, no latency
-    expect(screen.getByText(/down 12 min/)).toBeInTheDocument()
+    expect(screen.getByText(/down 12 min/)).not.toHaveTextContent('monitoring stopped')
+    expect(screen.getByText(/down 5 min/)).toHaveTextContent('down 5 min, then monitoring stopped')
   })
 
   it('all up', async () => {

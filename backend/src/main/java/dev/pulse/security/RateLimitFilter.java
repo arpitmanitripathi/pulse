@@ -2,6 +2,7 @@ package dev.pulse.security;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.Set;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
@@ -13,7 +14,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
- * Limits requests per client IP on login and register (password guessing, account spam)
+ * Limits requests per client IP on login, register and password reset (password guessing, account spam)
  * and on /api/public/** (anonymous traffic). Refresh and logout are not limited: their
  * token is 256 random bits, so there is nothing to guess, and the app calls refresh on
  * every page load. Other endpoints need a login and are not limited here.
@@ -22,6 +23,10 @@ import jakarta.servlet.http.HttpServletResponse;
 public class RateLimitFilter extends OncePerRequestFilter {
 
 	private static final Duration MINUTE = Duration.ofMinutes(1);
+
+	/** Where a password or an email address is tried; they share one allowance per IP. */
+	static final Set<String> LIMITED_AUTH_PATHS = Set.of("/api/auth/login", "/api/auth/register",
+			"/api/auth/forgot-password", "/api/auth/reset-password");
 
 	private final RateLimiter rateLimiter;
 	private final RateLimitProperties properties;
@@ -37,7 +42,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 		String path = request.getRequestURI();
 		String name;
 		int limit;
-		if (path.equals("/api/auth/login") || path.equals("/api/auth/register")) {
+		if (LIMITED_AUTH_PATHS.contains(path)) {
 			name = "auth";
 			limit = properties.authPerMinute();
 		}

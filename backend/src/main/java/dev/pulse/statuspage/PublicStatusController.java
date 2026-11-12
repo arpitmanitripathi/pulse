@@ -25,7 +25,9 @@ public class PublicStatusController {
 	@Operation(summary = "Public status page data: state, uptime, 90 daily bars, 24 h latency, 30 days of incidents")
 	public ResponseEntity<PublicStatus> get(@PathVariable String slug) {
 		return ResponseEntity.ok()
-			.cacheControl(CacheControl.maxAge(PublicStatusService.CACHE_TTL).cachePublic())
+			// The server caches for 30 s in Redis and clears it on every edit. A browser copy could not be
+			// cleared, so browsers must ask each time.
+			.cacheControl(CacheControl.noCache())
 			.body(service.get(slug));
 	}
 

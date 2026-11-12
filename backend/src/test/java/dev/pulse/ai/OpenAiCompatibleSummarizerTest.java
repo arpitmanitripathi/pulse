@@ -65,9 +65,29 @@ class OpenAiCompatibleSummarizerTest {
 			.withRequestBody(matchingJsonPath("$.messages[0].role", equalTo("system")))
 			.withRequestBody(matchingJsonPath("$.messages[0].content", containing("Use only the check data")))
 			.withRequestBody(matchingJsonPath("$.messages[1].content",
-					containing("2026-11-11 14:03:00 UTC | 503 | 120 ms | STATUS | Expected a 2xx status, got 503.")))
+					containing("when marked down | 503 | 120 ms | STATUS | Expected a 2xx status, got 503.")))
 			.withRequestBody(matchingJsonPath("$.messages[1].content",
-					containing("| no response | 5000 ms | TIMEOUT |"))));
+					containing("1 min before | no response | 5000 ms | TIMEOUT |"))));
+	}
+
+	@Test
+	void thePromptHasNoClockTimesForTheModelToRepeat() {
+		String prompt = OpenAiCompatibleSummarizer.userPrompt(INPUT);
+
+		assertThat(prompt).doesNotContain("2026").doesNotContain("UTC").doesNotContain("14:03");
+		assertThat(OpenAiCompatibleSummarizer.SYSTEM_PROMPT)
+			.contains("Do not write any dates, clock times or time zones")
+			.contains("Never call a 4xx a server error")
+			.contains("HTTP 5xx");
+	}
+
+	@Test
+	void timesAreRelativeToWhenTheMonitorWasMarkedDown() {
+		assertThat(OpenAiCompatibleSummarizer.relative(OPENED, OPENED)).isEqualTo("when marked down");
+		assertThat(OpenAiCompatibleSummarizer.relative(OPENED.minusSeconds(45), OPENED)).isEqualTo("45 s before");
+		assertThat(OpenAiCompatibleSummarizer.relative(OPENED.minusSeconds(150), OPENED)).isEqualTo("2 min 30 s before");
+		assertThat(OpenAiCompatibleSummarizer.relative(OPENED.minusSeconds(600), OPENED)).isEqualTo("10 min before");
+		assertThat(OpenAiCompatibleSummarizer.relative(OPENED.plusSeconds(30), OPENED)).isEqualTo("30 s after");
 	}
 
 	@Test

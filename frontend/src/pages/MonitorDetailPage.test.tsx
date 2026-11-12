@@ -1,5 +1,5 @@
-import { screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { screen, within } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
 import { fakeApi, problem } from '../test/fakeApi'
 import { renderApp, signedIn } from '../test/renderApp'
 
@@ -55,16 +55,30 @@ describe('monitor detail page', () => {
     expect(calls.some((c) => c.method === 'POST' && c.path === '/api/monitors/m1/pause')).toBe(true)
   })
 
-  it('delete only happens after confirming', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+  it('delete asks in a Pulse dialog first; Cancel (focused) and Escape keep the monitor', async () => {
     const { calls } = fakeApi({ ...detailRoutes, 'GET /api/monitors/m1': { body: monitor }, 'DELETE /api/monitors/m1': { status: 204 }, 'GET /api/monitors': { body: [] } })
     const { user } = renderApp('/monitors/m1')
 
     await user.click(await screen.findByRole('button', { name: 'Delete' }))
-    expect(calls.some((c) => c.method === 'DELETE')).toBe(false)
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete "API"?' })
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus() // Enter can't delete by accident
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+
     await user.click(screen.getByRole('button', { name: 'Delete' }))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'Delete monitor' })).toHaveFocus()
+    await user.tab() // focus stays inside the dialog
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'Delete monitor' }))
     expect(await screen.findByText('No monitors yet')).toBeInTheDocument()
-    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(1)
   })
 
   it('someone else\'s or a deleted monitor shows "not found"', async () => {

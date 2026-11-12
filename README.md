@@ -41,6 +41,9 @@ npm run dev                      # http://localhost:5173, forwards /api to :8080
 PULSE_API=http://localhost:8081 npm run dev -- --port 5174   # if those ports are taken
 ```
 
+Password-reset emails link to `APP_URL` (default `http://localhost:5173`). If the web app runs on another port,
+start the backend with it, e.g. `APP_URL=http://localhost:5174 docker compose up --build`. Emails land in Mailpit.
+
 Run the tests (Docker must be running; Testcontainers starts Postgres and Redis):
 
 ```bash

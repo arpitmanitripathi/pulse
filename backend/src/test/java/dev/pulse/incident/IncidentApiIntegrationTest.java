@@ -65,6 +65,8 @@ class IncidentApiIntegrationTest {
 			.andExpect(jsonPath("$[0].monitorName").value("Website"))
 			.andExpect(jsonPath("$[0].summaryStatus").value("PENDING"))
 			.andExpect(jsonPath("$[2].resolvedAt").isNotEmpty())
+			.andExpect(jsonPath("$[2].resolution").value("RECOVERED"))
+			.andExpect(jsonPath("$[0].resolution").doesNotExist())
 			.andExpect(jsonPath("$[0].alerts").doesNotExist());
 	}
 
@@ -110,9 +112,11 @@ class IncidentApiIntegrationTest {
 
 	private UUID incident(UUID monitorId, Instant opened, Instant resolved) {
 		return jdbc.queryForObject("""
-				INSERT INTO incidents (monitor_id, opened_at, resolved_at, first_error_type) VALUES (?, ?, ?, 'TIMEOUT')
-				RETURNING id""", UUID.class, monitorId, OffsetDateTime.ofInstant(opened, ZoneOffset.UTC),
-				resolved == null ? null : OffsetDateTime.ofInstant(resolved, ZoneOffset.UTC));
+				INSERT INTO incidents (monitor_id, opened_at, resolved_at, resolution, first_error_type)
+				VALUES (?, ?, ?, ?, 'TIMEOUT') RETURNING id""", UUID.class, monitorId,
+				OffsetDateTime.ofInstant(opened, ZoneOffset.UTC),
+				resolved == null ? null : OffsetDateTime.ofInstant(resolved, ZoneOffset.UTC),
+				resolved == null ? null : "RECOVERED");
 	}
 
 }

@@ -6,8 +6,9 @@ import { LatencyChart } from '../components/LatencyChart'
 import { MonitorForm } from '../components/MonitorForm'
 import { StateBadge } from '../components/StateBadge'
 import { Button, Card, Empty, ErrorNote, Loading, Stat } from '../components/ui'
-import { ERROR_LABELS, formatDuration, formatInterval, formatMs, formatTime, formatUptime } from '../lib/format'
+import { ERROR_LABELS, formatDuration, formatInterval, formatMs, formatTime, formatUptime, incidentStatus } from '../lib/format'
 import { REFRESH_MS, useApi } from '../lib/useApi'
+import { useConfirm } from '../lib/useConfirm'
 
 const WINDOWS: { value: StatsWindow; label: string }[] = [
   { value: '24h', label: '24 hours' },
@@ -22,6 +23,7 @@ export function MonitorDetailPage() {
   const [editing, setEditing] = useState(false)
   const [actionError, setActionError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const [confirm, confirmDialog] = useConfirm()
 
   if (monitor.error?.status === 404) {
     return (
@@ -52,6 +54,7 @@ export function MonitorDetailPage() {
 
   return (
     <div className="space-y-6">
+      {confirmDialog}
       <div>
         <Link to="/monitors" className="text-sm text-slate-500 hover:text-slate-800">
           ← Monitors
@@ -81,8 +84,13 @@ export function MonitorDetailPage() {
               <Button
                 variant="danger"
                 disabled={busy}
-                onClick={() => {
-                  if (window.confirm(`Delete "${m.name}" and all its history? This can't be undone.`)) void act(`/api/monitors/${m.id}`, 'DELETE')
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: `Delete "${m.name}"?`,
+                    message: 'Its checks, incidents and statistics are deleted too, and it disappears from your status pages. This can\'t be undone.',
+                    confirmLabel: 'Delete monitor',
+                  })
+                  if (ok) void act(`/api/monitors/${m.id}`, 'DELETE')
                 }}
               >
                 Delete
@@ -170,7 +178,7 @@ function IncidentsSection({ monitorId }: { monitorId: string }) {
               <Link to={`/incidents/${i.id}`} className="flex flex-wrap items-center justify-between gap-2 py-3 hover:bg-slate-50">
                 <span className="flex items-center gap-2 text-sm">
                   <span className={`h-2 w-2 rounded-full ${i.resolvedAt ? 'bg-slate-300' : 'bg-red-500'}`} aria-hidden />
-                  <span className="font-medium">{i.resolvedAt ? 'Resolved' : 'Ongoing'}</span>
+                  <span className="font-medium">{incidentStatus(i)}</span>
                   <span className="text-slate-500">· {ERROR_LABELS[i.firstErrorType]}</span>
                 </span>
                 <span className="text-sm text-slate-500">

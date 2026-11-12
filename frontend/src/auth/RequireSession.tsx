@@ -8,7 +8,8 @@ export function RequireSession() {
   const location = useLocation()
   if (session.status === 'loading') return <Loading label="Checking your session…" />
   if (session.status === 'anonymous') {
-    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
+    // An expired session comes back to this page after login; a deliberate log-out does not.
+    return session.loggedOut ? <Navigate to="/login" replace /> : <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
   }
   return <Outlet />
 }

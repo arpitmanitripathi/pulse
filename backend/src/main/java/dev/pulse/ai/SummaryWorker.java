@@ -53,7 +53,7 @@ public class SummaryWorker implements AutoCloseable {
 			SET summary_attempts = i.summary_attempts + 1, summary_next_attempt_at = :leaseUntil
 			FROM due, monitors m
 			WHERE i.id = due.id AND m.id = i.monitor_id
-			RETURNING i.id, i.monitor_id, i.opened_at, i.summary_attempts, m.name, m.url
+			RETURNING i.id, i.monitor_id, i.opened_at, i.summary_attempts, m.name, m.url, m.reset_at
 			""";
 
 	private final NamedParameterJdbcTemplate jdbc;
@@ -80,7 +80,8 @@ public class SummaryWorker implements AutoCloseable {
 				.addValue("limit", BATCH), (rs, i) -> new Claimed(
 						rs.getObject("id", UUID.class), rs.getObject("monitor_id", UUID.class),
 						rs.getObject("opened_at", OffsetDateTime.class).toInstant(), rs.getInt("summary_attempts"),
-						rs.getString("name"), rs.getString("url")));
+						rs.getString("name"), rs.getString("url"),
+						rs.getObject("reset_at", OffsetDateTime.class).toInstant()));
 		List<Callable<Void>> calls = new ArrayList<>();
 		for (Claimed incident : claimed) {
 			calls.add(() -> {
@@ -95,7 +96,7 @@ public class SummaryWorker implements AutoCloseable {
 	private void summarise(Claimed incident) {
 		try {
 			String summary = summarizer.summarize(new SummaryInput(incident.monitorName(), incident.url(),
-					incident.openedAt(), recentChecks(incident.monitorId())));
+					incident.openedAt(), recentChecks(incident.monitorId(), incident.resetAt())));
 			jdbc.update("""
 					UPDATE incidents SET summary = :summary, summary_status = 'DONE'
 					WHERE id = :id AND summary_status = 'PENDING'""",
@@ -114,12 +115,14 @@ public class SummaryWorker implements AutoCloseable {
 		}
 	}
 
-	private List<SummaryInput.CheckLine> recentChecks(UUID monitorId) {
+	/** The newest checks since the monitor last started fresh; older ones belong to another run or URL. */
+	private List<SummaryInput.CheckLine> recentChecks(UUID monitorId, Instant since) {
 		return jdbc.query("""
 				SELECT checked_at, status_code, latency_ms, error_type, error_message
-				FROM check_results WHERE monitor_id = :monitor
+				FROM check_results WHERE monitor_id = :monitor AND checked_at >= :since
 				ORDER BY checked_at DESC, id DESC LIMIT :limit
-				""", new MapSqlParameterSource("monitor", monitorId).addValue("limit", CHECKS),
+				""", new MapSqlParameterSource("monitor", monitorId).addValue("since", utc(since))
+					.addValue("limit", CHECKS),
 				(rs, i) -> new SummaryInput.CheckLine(rs.getObject("checked_at", OffsetDateTime.class).toInstant(),
 						(Integer) rs.getObject("status_code"), rs.getInt("latency_ms"), rs.getString("error_type"),
 						rs.getString("error_message")));
@@ -135,7 +138,8 @@ public class SummaryWorker implements AutoCloseable {
 		executor.close();
 	}
 
-	private record Claimed(UUID id, UUID monitorId, Instant openedAt, int attempts, String monitorName, String url) {
+	private record Claimed(UUID id, UUID monitorId, Instant openedAt, int attempts, String monitorName, String url,
+			Instant resetAt) {
 	}
 
 }

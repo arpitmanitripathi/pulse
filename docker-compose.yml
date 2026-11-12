@@ -41,6 +41,7 @@ services:
       REDIS_PORT: 6379
       JWT_SECRET: local-dev-only-secret-change-me-in-production
       COOKIE_SECURE: "false"   # plain http on localhost; production uses true
+      APP_URL: ${APP_URL:-http://localhost:5173}   # the web app's address, used in password reset emails
       SMTP_HOST: mailpit
       SMTP_PORT: 1025
       # Read from ./.env (git-ignored). Empty = AI summaries are skipped.

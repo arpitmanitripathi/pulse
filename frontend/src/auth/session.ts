@@ -3,7 +3,8 @@ import type { User } from '../api/types'
 
 export type Session =
   | { status: 'loading' }
-  | { status: 'anonymous' }
+  /** `loggedOut`: the user chose to log out, so the next login starts fresh instead of returning to the old page. */
+  | { status: 'anonymous'; loggedOut?: boolean }
   | { status: 'signed-in'; user: User }
 
 export interface SessionApi {
