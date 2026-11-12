@@ -16,7 +16,7 @@ and public status pages.
 | M4 Incidents + alerts | ✅ |
 | M5 AI summary | ✅ |
 | M6 Stats + status page | ✅ |
-| M7 Frontend | ⏳ |
+| M7 Frontend | ✅ |
 | M8 Load test | ⏳ |
 | M9 Ship | ⏳ |
 
@@ -32,13 +32,22 @@ curl localhost:8080/actuator/health
 API docs and a try-it-out console: http://localhost:8080/swagger-ui
 (register, log in, then click **Authorize** and paste the access token).
 
+The web app (Node 22.22+), with the backend above running:
+
+```bash
+cd frontend
+npm ci
+npm run dev                      # http://localhost:5173, forwards /api to :8080
+PULSE_API=http://localhost:8081 npm run dev -- --port 5174   # if those ports are taken
+```
+
 Run the tests (Docker must be running; Testcontainers starts Postgres and Redis):
 
 ```bash
-cd backend
-./mvnw verify
+cd backend && ./mvnw verify                          # backend: tests + coverage gate
+cd frontend && npm run lint && npm test && npm run build
 ```
 
 ## Tech stack
 
-Java 21 · Spring Boot 4 · PostgreSQL 17 · Flyway · Redis 7 · Testcontainers · JaCoCo · Docker · GitHub Actions
+Java 21 · Spring Boot 4 · PostgreSQL 17 · Flyway · Redis 7 · React 19 · TypeScript · Vite · Tailwind · Recharts · Testcontainers · Vitest · JaCoCo · Docker · GitHub Actions
