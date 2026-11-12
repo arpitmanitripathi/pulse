@@ -109,11 +109,11 @@ No database transaction is ever held open during an HTTP check.
 | `incidents` | id, monitor_id, opened_at, resolved_at (null), first_error_type, **summary**, summary_status (PENDING/DONE/FAILED/SKIPPED), summary_attempts, summary_next_attempt_at |
 | `alert_channels` | id, user_id, type (EMAIL/SLACK/DISCORD), target, name, created_at |
 | `alert_outbox` | id, incident_id, channel_id, kind (DOWN/RECOVERED), attempts, next_attempt_at, sent_at, last_error · **unique (incident_id, channel_id, kind)** |
-| `hourly_rollups` | monitor_id, hour, checks, failures, latency_p50, latency_p95 · primary key (monitor_id, hour) |
+| `hourly_rollups` | monitor_id, hour (UTC), checks, failures, latency_p50, latency_p95 (successful checks only; null if none) · primary key (monitor_id, hour) |
 | `status_pages` | id, user_id, slug (unique), title, created_at |
 | `status_page_monitors` | status_page_id, monitor_id, position |
 
-Indexes: `monitors(next_check_at) WHERE active`, `check_results(monitor_id, checked_at)`,
+Indexes: `monitors(next_check_at) WHERE active`, `check_results(monitor_id, checked_at)`, `check_results(checked_at)` (V4, for the jobs),
 `alert_outbox(next_attempt_at) WHERE sent_at IS NULL`, `incidents(monitor_id, opened_at)`,
 and a unique partial index so a monitor has at most one open incident.
 
@@ -153,12 +153,28 @@ characters) as DONE. On failure retry once after 30 s, then FAILED. Shown on the
 public page. The prompt allows only the data given; no guessing about infrastructure. The output is plain text
 and is always displayed as text, never as HTML.
 
-**G. Public status page.** `GET /api/public/status/{slug}` → current state, uptime 24 h / 7 d / 30 d,
-90 daily bars, hourly latency for 24 h, incidents for 30 days. Built from rollups, cached in Redis for 30 s. No AI text, no URLs.
+**G. Public status page.** `GET /api/public/status/{slug}` → page title and, per monitor in the page's order: name,
+state (UP/DOWN/UNKNOWN/PAUSED), uptime 24 h / 7 d / 30 d, 90 daily uptime bars, hourly latency for 24 h; plus incidents
+of the last 30 days (monitor name, opened, resolved). Cached in Redis for 30 s; editing or deleting the page clears
+its cache. No AI text, no URLs, no ids, no error details. If Redis is down the page is built without the cache.
 
-**H. Jobs (one instance at a time via `pg_try_advisory_lock`).**
-Hourly at :05: roll up the previous hour. Daily at 03:00 UTC: delete raw checks > 7 days and rollups > 90 days.
-The last 24 h of stats read raw checks; anything older reads rollups.
+**Stats rules (dashboard and public page).**
+- Uptime % = successful checks ÷ all checks, rounded *down* to 2 decimals (100.00 only with zero failures).
+  No checks → null. Paused time has no checks, so it does not count.
+- Latency p50 / p95 use successful checks only (a timeout is not a latency).
+- 24 h: exact, from raw checks in the last 24 h. Series: 24 hourly points.
+- 7 d: the last 168 whole UTC hours including the current one. Series: 168 hourly points.
+- 30 d (and the 90 bars): whole UTC days including today. Series: daily points.
+- Hours older than the last 24 come from `hourly_rollups`, newer ones from raw checks. Combining hours: uptime from
+  the summed counts; p50 / p95 as the average of the hourly values weighted by successful checks (an approximation:
+  exact percentiles need every raw check, and those are deleted after 7 days).
+- Series are dense: a bucket with no checks is present with null values, so charts show the gap.
+
+**H. Jobs (one instance at a time via `pg_try_advisory_lock`, held on its own connection for the whole job).**
+Hourly at :05 UTC: roll up every complete hour from the newest hour already rolled up (done again, to catch late
+results) to the previous hour, at most 7 days back. Rows are upserted, so running twice gives the same result and a
+missed run is repaired by the next one. Daily at 03:00 UTC: delete raw checks older than 7 days (in batches of
+10,000 rows, so no single long transaction) and rollups older than 90 days.
 
 ## Security
 
@@ -195,15 +211,15 @@ requests are allowed rather than blocked.
 |---|---|---|
 | POST | `/api/auth/register` · `/login` · `/refresh` · `/logout` | Auth |
 | GET | `/api/me` | Current user |
-| GET, POST | `/api/monitors` | List with state + 24 h uptime / Create |
+| GET, POST | `/api/monitors` | List with state + 24 h uptime (`uptime24h`, on every monitor response) / Create |
 | GET, PATCH, DELETE | `/api/monitors/{id}` | One monitor |
 | POST | `/api/monitors/{id}/pause` · `/resume` | Pause / resume |
 | GET | `/api/monitors/{id}/checks` | Raw checks, last 24 h, paginated |
-| GET | `/api/monitors/{id}/stats?window=24h\|7d\|30d` | Uptime %, p50 / p95 latency, series |
+| GET | `/api/monitors/{id}/stats?window=24h\|7d\|30d` | Checks, failures, uptime %, p50 / p95 latency, series (default 24h) |
 | GET | `/api/incidents?monitorId=&status=open\|resolved` · `/api/incidents/{id}` | Incidents (newest first, max 100) · one incident with its alert deliveries and AI summary |
 | GET, POST, DELETE | `/api/alert-channels` (`/{id}`) | Channels (max 5; webhook URLs masked) |
 | POST | `/api/alert-channels/{id}/test` | Send a test alert now (200, or 502 with the reason) |
-| GET, POST, PATCH, DELETE | `/api/status-pages` (`/{id}`) | Status pages |
+| GET, POST, PATCH, DELETE | `/api/status-pages` (`/{id}`) | Status pages (max 3): slug, title, ordered monitor ids (max 20, your own) |
 | GET | `/api/public/status/{slug}` | Public status page data |
 | GET | `/actuator/health` | Health |
 
@@ -283,3 +299,14 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-11 | No API key → incidents are marked SKIPPED (migration V3); old incidents are not summarised later | Pulse must work fully without AI; explaining an old outage is not useful |
 | 2026-11-11 | Summaries use a lease column (`summary_next_attempt_at`) instead of holding a row lock during the call | A lock held for a 10 s AI call would block the check processor from resolving that incident |
 | 2026-11-12 | Default model `gemini-3.5-flash-lite`, pinned (not a `-latest` alias) | Tested with a real key: `gemini-2.5-flash` is closed to new users; larger Flash models took 10–60 s; this one answered in 1.6–6 s with accurate summaries. A pinned name can't silently change behaviour |
+| 2026-11-12 | Latency percentiles use successful checks only | A timeout or refused connection has no meaningful response time; mixing them in would hide real slowness |
+| 2026-11-12 | 7 d / 30 d p50 and p95 are hourly percentiles averaged, weighted by successful checks; 24 h is exact | Raw checks are kept 7 days, so exact long-window percentiles are impossible; the weighting keeps busy hours from being outvoted by quiet ones |
+| 2026-11-12 | Uptime is rounded down to 2 decimals; null when there were no checks | 99.996 % must not show as 100.00 %; "no data" is different from 0 % |
+| 2026-11-12 | 7 d is 168 whole UTC hours, 30 d and the 90 bars are whole UTC days; series include empty buckets | Bars and points line up with clock hours and days; charts can show gaps honestly |
+| 2026-11-12 | The rollup job re-rolls from the newest rolled-up hour, upserting | One idempotent rule covers late results, a missed run and a restart |
+| 2026-11-12 | New index `check_results(checked_at)` (migration V4) | The rollup and retention jobs select by time across all monitors; without it each run scans the whole table |
+| 2026-11-12 | Retention deletes raw checks 10,000 rows per transaction | A day of checks for 1,000 monitors is ~1.4 M rows; one huge delete would hold locks and bloat the WAL |
+| 2026-11-12 | Advisory locks are session locks on a connection held for the job's duration | Work inside the job uses other pooled connections; if the instance dies, its connection closes and the lock is freed |
+| 2026-11-12 | Status page slugs: 3–40 of `a–z 0–9 -`, not starting or ending with `-`, unique across all users (409 if taken) | The slug is the public address; uniqueness is global |
+| 2026-11-12 | A status page may only list the owner's monitors (400 otherwise); its cache is cleared after the change commits | Another user's id must not be usable or probable; clearing before commit could re-cache the old version |
+| 2026-11-12 | The public page shows names, state, uptime, latency and incident times only | It is anonymous: URLs, ids, error messages and AI text can reveal internals |
