@@ -1,0 +1,52 @@
+{
+  "run_at_utc": "2026-11-13 10:44",
+  "instances": 2,
+  "monitors": 1000,
+  "interval_s": 60,
+  "minutes_total": 30.0,
+  "minutes_measured": 28.0,
+  "checks_due": 28000,
+  "checks_done": 28000,
+  "checks_per_minute": 1000,
+  "missed_pct": 0.0,
+  "failed_pct": 2.0,
+  "double_checks": 0,
+  "delay_ms": {
+    "p50": 506,
+    "p95": 959,
+    "p99": 1000,
+    "max": 1049
+  },
+  "resources": {
+    "app": {
+      "cpu_pct_avg": 2.2,
+      "cpu_pct_max": 29.7,
+      "mem_mib_avg": 500,
+      "mem_mib_max": 505
+    },
+    "app2": {
+      "cpu_pct_avg": 2.3,
+      "cpu_pct_max": 19.8,
+      "mem_mib_avg": 504,
+      "mem_mib_max": 528
+    },
+    "postgres": {
+      "cpu_pct_avg": 2.9,
+      "cpu_pct_max": 11.5,
+      "mem_mib_avg": 83,
+      "mem_mib_max": 85
+    },
+    "redis": {
+      "cpu_pct_avg": 1.5,
+      "cpu_pct_max": 2.7,
+      "mem_mib_avg": 10,
+      "mem_mib_max": 11
+    },
+    "wiremock": {
+      "cpu_pct_avg": 1.5,
+      "cpu_pct_max": 7.1,
+      "mem_mib_avg": 248,
+      "mem_mib_max": 249
+    }
+  }
+}

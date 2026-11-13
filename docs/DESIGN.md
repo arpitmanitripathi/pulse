@@ -107,7 +107,7 @@ No database transaction is ever held open during an HTTP check.
 | `refresh_tokens` | id, user_id, token_hash, expires_at, revoked_at |
 | `password_reset_tokens` | id, user_id, token_hash (unique), expires_at, used_at, created_at |
 | `monitors` | id, user_id, name, url, method (GET/HEAD), interval_s, timeout_ms, expected_status (null), active, **state** (UP/DOWN/UNKNOWN), consecutive_failures, consecutive_successes, **next_check_at**, last_checked_at, **reset_at** (last create / URL change / resume), created_at |
-| `check_results` | id, monitor_id, checked_at, success, status_code (null), latency_ms, error_type (NONE/TIMEOUT/DNS/TLS/CONNECTION/STATUS/BLOCKED), error_message |
+| `check_results` | id, monitor_id, checked_at, **scheduled_at** (when it was due; V7), success, status_code (null), latency_ms, error_type (NONE/TIMEOUT/DNS/TLS/CONNECTION/STATUS/BLOCKED), error_message |
 | `incidents` | id, monitor_id, opened_at, resolved_at (null), **resolution** (RECOVERED / MONITOR_CHANGED, set with resolved_at), first_error_type, **summary**, summary_status (PENDING/DONE/FAILED/SKIPPED), summary_attempts, summary_next_attempt_at |
 | `alert_channels` | id, user_id, type (EMAIL/SLACK/DISCORD), target, name, created_at |
 | `alert_outbox` | id, incident_id, channel_id (null once the channel is deleted), channel_name and channel_type (copied when the channel is deleted), kind (DOWN/RECOVERED), attempts, next_attempt_at, sent_at, last_error · **unique (incident_id, channel_id, kind)** |
@@ -290,9 +290,16 @@ pulse/
 - **Frontend:** monitor list, create form validation, status page render.
 
 ## Load test method
-Target: WireMock with 50 ms latency and a 2 % error rate. 1,000 monitors at 60 s, 30 min.
-Measured: scheduler lag (actual check time − scheduled time) p50 / p95 / p99, missed checks %,
-CPU and memory, then the same with 2 instances (no double checks). Results go in `BENCHMARK.md`.
+**Stack.** Its own Docker Compose project (`loadtest/`): Pulse, PostgreSQL, Redis and a WireMock target, with its own
+database, so development data is never touched. AI summaries off (no key), no alert channels.
+**Target.** WireMock answers 200 after a fixed 50 ms. 20 of the 1,000 monitors (2 %) point at a path that answers 503,
+so 2 % of checks fail (WireMock can't pick a status at random, and fixed failures are reproducible). The target is the
+only host the SSRF guard is told to trust (`PULSE_SSRF_TRUSTED_HOSTS=wiremock`, load-test stack only).
+**Load.** 1,000 monitors at 60 s, inserted straight into PostgreSQL (the per-user limit and the API rate limits are not
+what is measured), first checks spread evenly over one minute. 30 min per run; the first 2 min are warm-up and not counted.
+**Measured.** Check delay = `checked_at − scheduled_at` p50 / p95 / p99 / max; missed checks % = 1 − actual ÷ expected per
+monitor; double checks = (monitor, scheduled time) pairs checked more than once, which must be 0; CPU and memory from
+`docker stats` every 10 s. Then the same with 2 instances. Results go in `BENCHMARK.md`, with the machine they ran on.
 
 ## Not in v1
 Keyword/content checks · SSL-expiry checks · TCP/ping/DNS monitors · multiple probe regions ·
@@ -362,3 +369,6 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-13 | A deliberate log-out forgets the current page; an expired session still returns to it | Logging back in after choosing to log out should start at the dashboard, and the next person on that browser shouldn't land on the previous user's page |
 | 2026-11-13 | Deleting an alert channel keeps the record of alerts already sent or given up (V6: `channel_id` becomes null, name and type are copied); only waiting alerts are dropped | Found in manual testing: after deleting and re-adding a channel, an incident whose alerts had been emailed said "No alerts sent" |
 | 2026-11-13 | Password fields have a show/hide (eye) button | Asked for in manual testing; long passphrases are easier to type correctly when they can be checked. It is a real button with a label, so keyboards and screen readers can use it |
+| 2026-11-13 | The SSRF guard can trust named hosts (`PULSE_SSRF_TRUSTED_HOSTS`): empty by default, exact host names only (an IP address there stops the app at startup), a warning at startup, set only by the load-test stack | The load target must run locally: 1,000 checks a minute against someone else's site would be abuse. Every other URL is still fully checked |
+| 2026-11-13 | Every check result stores the time it was due (`check_results.scheduled_at`, V7) | Check delay is the scheduler's key number and becomes measurable for every check; two results for the same due time would expose a double check |
+| 2026-11-13 | The load test runs on the developer laptop first; `BENCHMARK.md` names the machine; it is repeated on EC2 in M9 | Results are needed now for the README; laptop numbers are honest when labelled as such |

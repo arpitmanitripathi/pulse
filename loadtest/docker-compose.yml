@@ -1,0 +1,64 @@
+# Load-test stack (docs/DESIGN.md, "Load test method"). Its own Compose project with its own
+# database, so development data is never touched:
+#   docker compose -p pulse-loadtest -f loadtest/docker-compose.yml up -d --build
+# Normally started by loadtest/run.py. The second instance runs with --profile two.
+name: pulse-loadtest
+
+x-app: &app
+  build: ../backend
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    wiremock:
+      condition: service_started
+  environment:
+    DB_URL: jdbc:postgresql://postgres:5432/pulse
+    DB_USER: pulse
+    DB_PASSWORD: pulse
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+    JWT_SECRET: loadtest-only-secret-that-is-long-enough-123
+    APP_URL: http://localhost
+    AI_API_KEY: ""                        # AI summaries off: the AI is not what is measured
+    PULSE_SSRF_TRUSTED_HOSTS: wiremock    # the ONLY trusted host, and only in this stack
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: pulse
+      POSTGRES_USER: pulse
+      POSTGRES_PASSWORD: pulse
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulse -d pulse"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # The target: 200 after a fixed 50 ms on /ok, 503 on /fail.
+  wiremock:
+    image: wiremock/wiremock:3.13.2
+    command: ["--no-request-journal", "--async-response-enabled=true", "--container-threads=200"]
+    volumes:
+      - ./wiremock/mappings:/home/wiremock/mappings:ro
+
+  app:
+    <<: *app
+    ports:
+      - "18080:8080"    # only for the health check from run.py
+
+  app2:
+    <<: *app
+    profiles: ["two"]
+    ports:
+      - "18081:8080"

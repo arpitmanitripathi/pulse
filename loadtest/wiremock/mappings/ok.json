@@ -1,0 +1,4 @@
+{
+  "request": { "method": "GET", "url": "/ok" },
+  "response": { "status": 200, "body": "ok", "fixedDelayMilliseconds": 50 }
+}
