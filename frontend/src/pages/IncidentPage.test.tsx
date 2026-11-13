@@ -47,8 +47,8 @@ describe('incident page', () => {
       resolvedAt: null,
       resolution: null,
       alerts: [
-        { channelId: 'c1', channelName: 'Email', type: 'EMAIL', kind: 'DOWN', attempts: 1, sentAt: '2026-11-12T09:00:05Z', lastError: null },
-        { channelId: 'c2', channelName: 'Ops Slack', type: 'SLACK', kind: 'DOWN', attempts: 3, sentAt: null, lastError: 'Slack answered HTTP 500.' },
+        { channelId: 'c1', channelName: 'Email', type: 'EMAIL', kind: 'DOWN', attempts: 1, sentAt: '2026-11-12T09:00:05Z', lastError: null, channelDeleted: false },
+        { channelId: 'c2', channelName: 'Ops Slack', type: 'SLACK', kind: 'DOWN', attempts: 3, sentAt: null, lastError: 'Slack answered HTTP 500.', channelDeleted: false },
       ],
     })
 
@@ -56,6 +56,15 @@ describe('incident page', () => {
     expect(screen.getByText('Down alert to Ops Slack (slack): retrying')).toBeInTheDocument()
     expect(screen.getByText('3 attempts. Last error: Slack answered HTTP 500.')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Ongoing incident: API' })).toBeInTheDocument()
+  })
+
+  it('an alert to a channel that was deleted later is still shown, marked as deleted', async () => {
+    show({
+      alerts: [{ channelId: null, channelName: 'My email', type: 'EMAIL', kind: 'DOWN', attempts: 1, sentAt: '2026-11-12T09:00:05Z', lastError: null, channelDeleted: true }],
+    })
+
+    expect(await screen.findByText('Down alert to My email (email, since deleted): sent')).toBeInTheDocument()
+    expect(screen.queryByText(/No alerts sent/)).not.toBeInTheDocument()
   })
 
   it('says when nobody was alerted', async () => {

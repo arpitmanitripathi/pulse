@@ -151,8 +151,9 @@ public class AlertOutboxDispatcher implements AutoCloseable {
 	}
 
 	/** For tests and the incident API: one outbox row's delivery state. */
+	/** {@code channelId} is null and {@code channelDeleted} true once the channel has been deleted. */
 	public record Delivery(UUID channelId, String channelName, AlertChannelType type, AlertKind kind, int attempts,
-			Instant sentAt, String lastError) {
+			Instant sentAt, String lastError, boolean channelDeleted) {
 	}
 
 }

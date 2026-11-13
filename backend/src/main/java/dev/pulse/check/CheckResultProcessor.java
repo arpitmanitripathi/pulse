@@ -102,11 +102,11 @@ public class CheckResultProcessor {
 				WHERE monitor_id = ? AND resolved_at IS NULL RETURNING id
 				""", UUID.class, at, monitorId);
 		for (UUID incidentId : resolved) {
-			// Only channels that were told "down" are told "recovered".
+			// Only channels that were told "down", and still exist, are told "recovered".
 			int alerts = jdbc.update("""
 					INSERT INTO alert_outbox (incident_id, channel_id, kind, next_attempt_at)
 					SELECT incident_id, channel_id, 'RECOVERED', ?
-					FROM alert_outbox WHERE incident_id = ? AND kind = 'DOWN'
+					FROM alert_outbox WHERE incident_id = ? AND kind = 'DOWN' AND channel_id IS NOT NULL
 					""", at, incidentId);
 			log.info("incident.resolved incident_id={} monitor_id={} alerts_queued={}", incidentId, monitorId,
 					alerts);

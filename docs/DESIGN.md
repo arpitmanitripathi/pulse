@@ -110,7 +110,7 @@ No database transaction is ever held open during an HTTP check.
 | `check_results` | id, monitor_id, checked_at, success, status_code (null), latency_ms, error_type (NONE/TIMEOUT/DNS/TLS/CONNECTION/STATUS/BLOCKED), error_message |
 | `incidents` | id, monitor_id, opened_at, resolved_at (null), **resolution** (RECOVERED / MONITOR_CHANGED, set with resolved_at), first_error_type, **summary**, summary_status (PENDING/DONE/FAILED/SKIPPED), summary_attempts, summary_next_attempt_at |
 | `alert_channels` | id, user_id, type (EMAIL/SLACK/DISCORD), target, name, created_at |
-| `alert_outbox` | id, incident_id, channel_id, kind (DOWN/RECOVERED), attempts, next_attempt_at, sent_at, last_error · **unique (incident_id, channel_id, kind)** |
+| `alert_outbox` | id, incident_id, channel_id (null once the channel is deleted), channel_name and channel_type (copied when the channel is deleted), kind (DOWN/RECOVERED), attempts, next_attempt_at, sent_at, last_error · **unique (incident_id, channel_id, kind)** |
 | `hourly_rollups` | monitor_id, hour (UTC), checks, failures, latency_p50, latency_p95 (successful checks only; null if none) · primary key (monitor_id, hour) |
 | `status_pages` | id, user_id, slug (unique), title, created_at |
 | `status_page_monitors` | status_page_id, monitor_id, position |
@@ -138,7 +138,9 @@ Insert `check_results` → update counters →
 - `UP/UNKNOWN` and failures reach 3 → `DOWN`, insert incident (summary PENDING), insert one DOWN outbox row per channel.
 - `DOWN` and successes reach 2 → `UP`, set `resolved_at` and resolution RECOVERED, insert one RECOVERED outbox row per channel.
 - `UNKNOWN` and first success → `UP` (no alert).
-- DOWN alerts go to every channel the user has; RECOVERED alerts only to channels that got the DOWN alert.
+- DOWN alerts go to every channel the user has; RECOVERED alerts only to channels that got the DOWN alert and still exist.
+- Deleting a channel drops its alerts that are still waiting to be sent, and keeps the record of the ones that were
+  sent or given up (with the channel's name and type), so an incident's history stays true.
 - A result whose URL no longer matches the monitor (changed during the check), or for a paused monitor, is dropped.
 - Pausing a monitor, resuming it or changing its URL closes its open incident at that moment with resolution
   MONITOR_CHANGED and no RECOVERED alert: nothing recovered, monitoring stopped or moved.
@@ -358,3 +360,4 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-13 | Deletes are confirmed in a Pulse dialog, not the browser's `confirm()` | The browser box shows the host name and can't match the app; the dialog focuses Cancel, so Enter never deletes by accident |
 | 2026-11-13 | After a 429 on login the form counts down and disables the button | The server's "try again in N seconds" was static text and looked stuck |
 | 2026-11-13 | A deliberate log-out forgets the current page; an expired session still returns to it | Logging back in after choosing to log out should start at the dashboard, and the next person on that browser shouldn't land on the previous user's page |
+| 2026-11-13 | Deleting an alert channel keeps the record of alerts already sent or given up (V6: `channel_id` becomes null, name and type are copied); only waiting alerts are dropped | Found in manual testing: after deleting and re-adding a channel, an incident whose alerts had been emailed said "No alerts sent" |

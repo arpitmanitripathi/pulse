@@ -78,13 +78,14 @@ public class IncidentController {
 	@Operation(summary = "One incident, with the delivery state of each alert")
 	public IncidentResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
 		List<Delivery> deliveries = jdbc.query("""
-				SELECT o.channel_id, c.name, c.type, o.kind, o.attempts, o.sent_at, o.last_error
-				FROM alert_outbox o JOIN alert_channels c ON c.id = o.channel_id
-				WHERE o.incident_id = ? ORDER BY c.name, o.kind
+				SELECT o.channel_id, coalesce(c.name, o.channel_name) AS name, coalesce(c.type, o.channel_type) AS type,
+				       o.kind, o.attempts, o.sent_at, o.last_error
+				FROM alert_outbox o LEFT JOIN alert_channels c ON c.id = o.channel_id -- deleted channels keep their history
+				WHERE o.incident_id = ? ORDER BY name, o.kind
 				""", (rs, i) -> new Delivery(rs.getObject("channel_id", UUID.class), rs.getString("name"),
 				AlertChannelType.valueOf(rs.getString("type")), AlertKind.valueOf(rs.getString("kind")),
 				rs.getInt("attempts"), toInstant(rs.getObject("sent_at", OffsetDateTime.class)),
-				rs.getString("last_error")), id);
+				rs.getString("last_error"), rs.getObject("channel_id") == null), id);
 		return jdbc.query(SELECT + " WHERE i.id = ? AND m.user_id = ?", (rs, i) -> new IncidentResponse(
 				rs.getObject("id", UUID.class), rs.getObject("monitor_id", UUID.class), rs.getString("monitor_name"),
 				rs.getObject("opened_at", OffsetDateTime.class).toInstant(),

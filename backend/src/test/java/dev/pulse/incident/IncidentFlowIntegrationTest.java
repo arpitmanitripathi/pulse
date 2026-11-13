@@ -1,18 +1,16 @@
 package dev.pulse.incident;
 
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-
-import java.time.OffsetDateTime;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
@@ -26,15 +24,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import dev.pulse.IntegrationTest;
+import dev.pulse.alert.AlertChannelType;
+import dev.pulse.alert.AlertOutboxDispatcher;
 import dev.pulse.check.CheckOutcome;
 import dev.pulse.check.CheckResultProcessor;
 import dev.pulse.check.ClaimedMonitor;
 import dev.pulse.check.ErrorType;
 import dev.pulse.monitor.CheckMethod;
+import dev.pulse.support.RecordingAlertSenders;
 import dev.pulse.support.TestUsers;
 import dev.pulse.support.TestUsers.TestUser;
 
-/** The check processor driving incidents and queuing alerts (no sending here). */
 @IntegrationTest
 class IncidentFlowIntegrationTest {
 
@@ -210,7 +210,86 @@ class IncidentFlowIntegrationTest {
 		assertThat(jdbc.queryForObject("SELECT consecutive_failures FROM monitors", Integer.class)).isEqualTo(2);
 	}
 
+	@Test
+	void deletingAChannelKeepsTheRecordOfAlertsAlreadySentToIt() throws Exception {
+		fail();
+		fail();
+		fail();
+		// Email delivered its DOWN alert; Slack gave up after 6 attempts.
+		jdbc.update("UPDATE alert_outbox SET sent_at = now(), attempts = 1 WHERE channel_id = ?", channel("Email"));
+		jdbc.update("UPDATE alert_outbox SET attempts = 6, last_error = 'Slack answered HTTP 404.' WHERE channel_id = ?",
+				channel("Team Slack"));
+		String incidentId = jdbc.queryForObject("SELECT id::text FROM incidents", String.class);
+
+		for (String name : List.of("Email", "Team Slack")) {
+			mvc.perform(delete("/api/alert-channels/" + channel(name)).header("Authorization", alice.bearer()))
+				.andExpect(status().isNoContent());
+		}
+
+		mvc.perform(get("/api/incidents/" + incidentId).header("Authorization", alice.bearer()))
+			.andExpect(jsonPath("$.alerts.length()").value(2)) // the history survives the channels
+			.andExpect(jsonPath("$.alerts[0].channelName").value("Email"))
+			.andExpect(jsonPath("$.alerts[0].type").value("EMAIL"))
+			.andExpect(jsonPath("$.alerts[0].sentAt").isNotEmpty())
+			.andExpect(jsonPath("$.alerts[0].channelDeleted").value(true))
+			.andExpect(jsonPath("$.alerts[1].channelName").value("Team Slack"))
+			.andExpect(jsonPath("$.alerts[1].attempts").value(6))
+			.andExpect(jsonPath("$.alerts[1].lastError").value("Slack answered HTTP 404."));
+	}
+
+	@Test
+	void aDeletedChannelLosesItsUnsentAlertsAndIsNeverToldItRecovered(@Autowired RecordingAlertSenders senders,
+			@Autowired org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate named) throws Exception {
+		fail();
+		fail();
+		fail();
+		jdbc.update("UPDATE alert_outbox SET sent_at = now(), attempts = 1 WHERE channel_id = ?", channel("Team Slack"));
+		// Email's DOWN alert is still waiting to be sent when the channel is deleted.
+		mvc.perform(delete("/api/alert-channels/" + channel("Email")).header("Authorization", alice.bearer()))
+			.andExpect(status().isNoContent());
+
+		assertThat(jdbc.queryForObject("SELECT count(*) FROM alert_outbox WHERE sent_at IS NULL", Integer.class))
+			.as("the deleted channel's unsent alert is dropped").isZero();
+
+		succeed();
+		succeed();
+		assertThat(outboxKinds()).as("RECOVERED only for the channel that still exists").containsExactly("DOWN", "RECOVERED");
+
+		senders.reset();
+		// The fake checks above run ahead of real time, so the dispatcher's clock does too.
+		try (AlertOutboxDispatcher dispatcher = new AlertOutboxDispatcher(named, senders,
+				java.time.Clock.offset(java.time.Clock.systemUTC(), java.time.Duration.ofMinutes(10)))) {
+			dispatcher.dispatchDue();
+		}
+		assertThat(senders.sent()).extracting(RecordingAlertSenders.Sent::type).containsExactly(AlertChannelType.SLACK);
+	}
+
+	@Test
+	void aChannelDeletedAfterItsDownAlertWasSentGetsNoRecoveredAlert() throws Exception {
+		fail();
+		fail();
+		fail();
+		jdbc.update("UPDATE alert_outbox SET sent_at = now(), attempts = 1"); // both DOWN alerts delivered
+		mvc.perform(delete("/api/alert-channels/" + channel("Email")).header("Authorization", alice.bearer()))
+			.andExpect(status().isNoContent());
+
+		succeed();
+		succeed();
+
+		assertThat(jdbc.queryForObject("SELECT count(*) FROM alert_outbox WHERE kind = 'RECOVERED' AND channel_id IS NULL",
+				Integer.class)).as("no RECOVERED alert addressed to a deleted channel").isZero();
+		assertThat(outboxKinds()).containsExactly("DOWN", "DOWN", "RECOVERED"); // Email's DOWN kept as history
+		String incidentId = jdbc.queryForObject("SELECT id::text FROM incidents", String.class);
+		mvc.perform(get("/api/incidents/" + incidentId).header("Authorization", alice.bearer()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.alerts.length()").value(3));
+	}
+
 	// ---------- helpers ----------
+
+	private UUID channel(String name) {
+		return jdbc.queryForObject("SELECT id FROM alert_channels WHERE name = ?", UUID.class, name);
+	}
 
 	private String resolution() {
 		return jdbc.queryForObject("SELECT resolution FROM incidents ORDER BY opened_at LIMIT 1", String.class);

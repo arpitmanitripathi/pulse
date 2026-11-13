@@ -12,6 +12,7 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,15 +38,17 @@ public class AlertChannelService {
 	private final AlertSenders senders;
 	private final RateLimiter rateLimiter;
 	private final Clock clock;
+	private final JdbcTemplate jdbc;
 
 	public AlertChannelService(AlertChannelRepository channels, UserRepository users, SsrfGuard ssrfGuard,
-			AlertSenders senders, RateLimiter rateLimiter, Clock clock) {
+			AlertSenders senders, RateLimiter rateLimiter, Clock clock, JdbcTemplate jdbc) {
 		this.channels = channels;
 		this.users = users;
 		this.ssrfGuard = ssrfGuard;
 		this.senders = senders;
 		this.rateLimiter = rateLimiter;
 		this.clock = clock;
+		this.jdbc = jdbc;
 	}
 
 	@Transactional(readOnly = true)
@@ -68,7 +71,15 @@ public class AlertChannelService {
 
 	@Transactional
 	public void delete(UUID userId, UUID channelId) {
-		channels.delete(find(userId, channelId));
+		AlertChannel channel = find(userId, channelId);
+		// Alerts still waiting to be sent to this channel are dropped.
+		jdbc.update("DELETE FROM alert_outbox WHERE channel_id = ? AND sent_at IS NULL AND attempts < ?", channelId,
+				AlertOutboxDispatcher.MAX_ATTEMPTS);
+		// Alerts that were sent or given up stay in the incident's history; keep the channel's name and type,
+		// because deleting the channel clears channel_id (ON DELETE SET NULL, migration V6).
+		jdbc.update("UPDATE alert_outbox SET channel_name = ?, channel_type = ? WHERE channel_id = ?", channel.getName(),
+				channel.getType().name(), channelId);
+		channels.delete(channel);
 	}
 
 	/** Sends a test message right now, so the user knows the channel works. */

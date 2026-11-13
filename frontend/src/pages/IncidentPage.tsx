@@ -110,7 +110,7 @@ function timeline(incident: Incident): Event[] {
 }
 
 function alertEvent(d: Delivery): Event {
-  const what = `${d.kind === 'DOWN' ? 'Down' : 'Recovered'} alert to ${d.channelName} (${d.type.toLowerCase()})`
+  const what = `${d.kind === 'DOWN' ? 'Down' : 'Recovered'} alert to ${d.channelName} (${d.type.toLowerCase()}${d.channelDeleted ? ', since deleted' : ''})`
   if (d.sentAt) return { title: `${what}: sent`, time: d.sentAt, color: 'bg-sky-500' }
   return {
     title: `${what}: ${d.attempts >= 6 ? 'gave up' : d.attempts === 0 ? 'queued' : 'retrying'}`,
