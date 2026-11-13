@@ -1,4 +1,4 @@
-import type { ComponentProps, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
+import { useState, type ComponentProps, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
 import type { ApiError } from '../api/client'
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -63,6 +63,30 @@ export function Field({ label, error, hint, children }: { label: string; error?:
 
 export function TextInput({ invalid, describedBy, ...props }: InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean; describedBy?: string }) {
   return <input className={inputClass} aria-invalid={invalid || undefined} aria-describedby={describedBy} {...props} />
+}
+
+/** A password field with an eye button that shows or hides what was typed. */
+export function PasswordInput({ invalid, describedBy, ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & { invalid?: boolean; describedBy?: string }) {
+  const [visible, setVisible] = useState(false)
+  return (
+    <div className="relative">
+      <input className={`${inputClass} pr-10`} type={visible ? 'text' : 'password'} aria-invalid={invalid || undefined} aria-describedby={describedBy} {...props} />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        aria-pressed={visible}
+        title={visible ? 'Hide password' : 'Show password'}
+        className="absolute inset-y-0 right-0 flex items-center rounded-r-lg px-3 text-slate-400 hover:text-slate-700 focus-visible:outline-2 focus-visible:outline-emerald-600"
+      >
+        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+          <circle cx="12" cy="12" r="3" />
+          {visible && <path d="M4 4l16 16" />}
+        </svg>
+      </button>
+    </div>
+  )
 }
 
 export function Select({ invalid, describedBy, ...props }: SelectHTMLAttributes<HTMLSelectElement> & { invalid?: boolean; describedBy?: string }) {

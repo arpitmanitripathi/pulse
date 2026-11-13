@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { api, ApiError } from '../api/client'
 import { AuthLayout, CooldownNote } from '../components/AuthLayout'
-import { Button, ErrorNote, Field, TextInput } from '../components/ui'
+import { Button, ErrorNote, Field, PasswordInput } from '../components/ui'
 import { useCooldown } from '../lib/useCooldown'
 
 /** Opened from the emailed link: /reset-password?token=… */
@@ -58,10 +58,10 @@ export function ResetPasswordPage() {
         <CooldownNote seconds={cooldown.remaining} />
         <ErrorNote error={error} />
         <Field label="New password" error={errors.password}>
-          {(p) => <TextInput id={p.id} invalid={p.invalid} describedBy={p.describedBy} type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
+          {(p) => <PasswordInput id={p.id} invalid={p.invalid} describedBy={p.describedBy} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />}
         </Field>
         <Field label="Repeat new password" error={errors.repeat}>
-          {(p) => <TextInput id={p.id} invalid={p.invalid} describedBy={p.describedBy} type="password" autoComplete="new-password" value={repeat} onChange={(e) => setRepeat(e.target.value)} />}
+          {(p) => <PasswordInput id={p.id} invalid={p.invalid} describedBy={p.describedBy} autoComplete="new-password" value={repeat} onChange={(e) => setRepeat(e.target.value)} />}
         </Field>
         <Button type="submit" disabled={busy || cooldown.remaining > 0} className="w-full">
           {busy ? 'Saving…' : 'Set new password'}

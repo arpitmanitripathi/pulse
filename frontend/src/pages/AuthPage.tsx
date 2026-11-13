@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router'
 import { ApiError } from '../api/client'
 import { useSession } from '../auth/session'
 import { AuthLayout, CooldownNote, Notice } from '../components/AuthLayout'
-import { Button, ErrorNote, Field, TextInput } from '../components/ui'
+import { Button, ErrorNote, Field, PasswordInput, TextInput } from '../components/ui'
 import { useCooldown } from '../lib/useCooldown'
 
 export function AuthPage({ mode }: { mode: 'login' | 'register' }) {
@@ -70,7 +70,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }) {
         </Field>
         <Field label="Password" error={fieldErrors.password} hint={isRegister ? 'At least 10 characters. Very common passwords are refused.' : undefined}>
           {(p) => (
-            <TextInput id={p.id} invalid={p.invalid} describedBy={p.describedBy} type="password" autoComplete={isRegister ? 'new-password' : 'current-password'} value={password} onChange={(e) => setPassword(e.target.value)} />
+            <PasswordInput id={p.id} invalid={p.invalid} describedBy={p.describedBy} autoComplete={isRegister ? 'new-password' : 'current-password'} value={password} onChange={(e) => setPassword(e.target.value)} />
           )}
         </Field>
         {!isRegister && (
