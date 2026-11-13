@@ -265,6 +265,15 @@ class IncidentFlowIntegrationTest {
 	}
 
 	@Test
+	void eachResultRecordsWhenItsCheckWasDue() {
+		Instant due = t.minusSeconds(7);
+		processor.record(new ClaimedMonitor(monitorId, URL, CheckMethod.GET, 5000, null, due), CheckOutcome.success(t, 200, 80));
+
+		assertThat(jdbc.queryForObject("SELECT scheduled_at FROM check_results", OffsetDateTime.class).toInstant())
+			.isEqualTo(due);
+	}
+
+	@Test
 	void aChannelDeletedAfterItsDownAlertWasSentGetsNoRecoveredAlert() throws Exception {
 		fail();
 		fail();

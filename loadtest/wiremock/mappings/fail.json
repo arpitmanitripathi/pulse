@@ -1,0 +1,4 @@
+{
+  "request": { "method": "GET", "url": "/fail" },
+  "response": { "status": 503, "body": "unavailable", "fixedDelayMilliseconds": 50 }
+}

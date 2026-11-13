@@ -61,9 +61,10 @@ public class CheckResultProcessor {
 
 		OffsetDateTime at = utc(outcome.checkedAt());
 		jdbc.update("""
-				INSERT INTO check_results (monitor_id, checked_at, success, status_code, latency_ms, error_type, error_message)
-				VALUES (?, ?, ?, ?, ?, ?, ?)
-				""", monitor.id(), at, outcome.success(), outcome.statusCode(), outcome.latencyMs(),
+				INSERT INTO check_results (monitor_id, checked_at, scheduled_at, success, status_code, latency_ms, error_type,
+				                           error_message)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				""", monitor.id(), at, utc(monitor.scheduledAt()), outcome.success(), outcome.statusCode(), outcome.latencyMs(),
 				outcome.errorType().name(), outcome.errorMessage());
 
 		Transition next = IncidentStateMachine.next(current.state(), current.failures(), current.successes(),

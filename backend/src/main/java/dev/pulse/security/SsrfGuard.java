@@ -8,7 +8,12 @@ import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -27,6 +32,10 @@ import org.springframework.stereotype.Component;
  * </ul>
  * Called when a URL is saved and again right before each check, because DNS
  * can change in between (DNS rebinding).
+ *
+ * <p>The load-test stack names one trusted host ({@code pulse.ssrf.trusted-hosts}), its local
+ * WireMock target. Only the address check is skipped for that exact name; every URL rule
+ * still applies, IP addresses can never be trusted, and the list is empty everywhere else.
  */
 @Component
 public class SsrfGuard {
@@ -34,18 +43,42 @@ public class SsrfGuard {
 	static final String PRIVATE_ADDRESS = "This URL points to a private or reserved network address, "
 			+ "which Pulse does not check.";
 
+	private static final Logger log = LoggerFactory.getLogger(SsrfGuard.class);
+	/** An IPv4 address, or anything with a colon (IPv6, possibly in brackets). */
+	private static final Pattern IP_LITERAL = Pattern.compile("^\\[?[0-9a-fA-F:.]*:[0-9a-fA-F:.]*\\]?$|^[0-9.]+$");
+
 	private final HostResolver resolver;
 	private final Predicate<InetAddress> allowedAddress;
+	private final Set<String> trustedHosts;
 
 	@Autowired
+	public SsrfGuard(HostResolver resolver, SsrfProperties properties) {
+		this(resolver, SsrfGuard::isPublic, properties.trustedHosts());
+	}
+
 	public SsrfGuard(HostResolver resolver) {
-		this(resolver, SsrfGuard::isPublic);
+		this(resolver, SsrfGuard::isPublic, List.of());
 	}
 
 	/** For tests that need a fake website on 127.0.0.1; production always uses {@link #isPublic}. */
 	public SsrfGuard(HostResolver resolver, Predicate<InetAddress> allowedAddress) {
+		this(resolver, allowedAddress, List.of());
+	}
+
+	private SsrfGuard(HostResolver resolver, Predicate<InetAddress> allowedAddress, List<String> trusted) {
 		this.resolver = resolver;
 		this.allowedAddress = allowedAddress;
+		this.trustedHosts = trusted == null ? Set.of() : Set.copyOf(trusted.stream()
+			.map(h -> h.trim().toLowerCase(Locale.ROOT)).filter(h -> !h.isEmpty()).toList());
+		for (String host : trustedHosts) {
+			if (IP_LITERAL.matcher(host).matches()) {
+				throw new IllegalStateException("pulse.ssrf.trusted-hosts may only contain host names, not \"" + host + "\"");
+			}
+		}
+		if (!trustedHosts.isEmpty()) {
+			log.warn("ssrf.trusted_hosts={} — private addresses of these hosts are allowed. Load testing only, never in production.",
+					trustedHosts);
+		}
 	}
 
 	/** Full check: URL rules plus DNS. Returns the parsed URL and its (all allowed) addresses. */
@@ -82,6 +115,9 @@ public class SsrfGuard {
 		InetAddress[] addresses = resolver.resolve(stripBrackets(host));
 		if (addresses.length == 0) {
 			throw new UnknownHostException(host);
+		}
+		if (trustedHosts.contains(host.toLowerCase(Locale.ROOT))) {
+			return addresses; // the load-test target (see class comment)
 		}
 		for (InetAddress address : addresses) {
 			if (!allowedAddress.test(address)) {

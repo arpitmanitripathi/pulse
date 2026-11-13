@@ -57,6 +57,10 @@ pulse:
     refresh-token-ttl: 7d
     cookie-secure: ${COOKIE_SECURE:true}
     app-url: ${APP_URL:http://localhost:5173}   # the web app's address, used in password reset emails
+  ssrf:
+    # Host names whose private addresses are allowed. EMPTY in every real deployment;
+    # only the load-test stack sets it, to its WireMock target (docs/DESIGN.md).
+    trusted-hosts: ${PULSE_SSRF_TRUSTED_HOSTS:}
   rate-limit:
     auth-per-minute: 10
     public-per-minute: 60

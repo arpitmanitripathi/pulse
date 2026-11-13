@@ -17,7 +17,7 @@ and public status pages.
 | M5 AI summary | ✅ |
 | M6 Stats + status page | ✅ |
 | M7 Frontend | ✅ |
-| M8 Load test | ⏳ |
+| M8 Load test | ✅ [results](BENCHMARK.md) |
 | M9 Ship | ⏳ |
 
 ## Run it locally
