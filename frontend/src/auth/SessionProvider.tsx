@@ -43,7 +43,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       await api('/api/auth/logout', { method: 'POST' })
     } finally {
       setAccessToken(null)
-      setSession({ status: 'anonymous' })
+      setSession({ status: 'anonymous', loggedOut: true })
     }
   }, [])
 

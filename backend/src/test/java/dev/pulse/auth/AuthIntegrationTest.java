@@ -238,6 +238,19 @@ class AuthIntegrationTest {
 			.andExpect(status().isUnauthorized());
 	}
 
+	// ---------- common passwords ----------
+
+	@Test
+	void aCommonPasswordIsRefusedWhateverItsCase() throws Exception {
+		for (String common : List.of("password123", "Password123", "QWERTYUIOP", "1234567890")) {
+			mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(json(EMAIL, common)))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.errors.password").value(AuthService.TOO_COMMON));
+		}
+		assertThat(jdbc.queryForObject("SELECT count(*) FROM users", Integer.class)).isZero();
+		register(); // an uncommon password of the same length works
+	}
+
 	// ---------- rate limit ----------
 
 	@Test

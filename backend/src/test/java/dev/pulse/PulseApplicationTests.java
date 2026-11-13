@@ -42,7 +42,8 @@ class PulseApplicationTests {
 
 		assertThat(tables).containsExactlyInAnyOrder(
 				"users", "refresh_tokens", "monitors", "check_results", "incidents",
-				"alert_channels", "alert_outbox", "hourly_rollups", "status_pages", "status_page_monitors");
+				"alert_channels", "alert_outbox", "hourly_rollups", "status_pages", "status_page_monitors",
+				"password_reset_tokens");
 	}
 
 	@Test

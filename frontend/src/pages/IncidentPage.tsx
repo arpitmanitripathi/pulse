@@ -1,7 +1,7 @@
 import { Link, useParams } from 'react-router'
 import type { Delivery, Incident } from '../api/types'
 import { Card, Empty, ErrorNote, Loading } from '../components/ui'
-import { ERROR_LABELS, formatDuration, formatTime } from '../lib/format'
+import { ERROR_LABELS, formatDuration, formatTime, incidentStatus } from '../lib/format'
 import { REFRESH_MS, useApi } from '../lib/useApi'
 
 export function IncidentPage() {
@@ -28,7 +28,7 @@ export function IncidentPage() {
           ← {incident.monitorName}
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-          {incident.resolvedAt ? 'Resolved incident' : 'Ongoing incident'}: {incident.monitorName}
+          {incidentStatus(incident)} incident: {incident.monitorName}
         </h1>
         <p className="mt-1 text-sm text-slate-600">
           {ERROR_LABELS[incident.firstErrorType]} · started {formatTime(incident.openedAt)} · {incident.resolvedAt ? 'lasted' : 'so far'}{' '}
@@ -91,7 +91,16 @@ function timeline(incident: Incident): Event[] {
   const deliveries = incident.alerts ?? []
   for (const d of deliveries.filter((x) => x.kind === 'DOWN')) events.push(alertEvent(d))
   if (incident.resolvedAt) {
-    events.push({ title: 'Recovered (2 successful checks in a row)', time: incident.resolvedAt, color: 'bg-emerald-500' })
+    events.push(
+      incident.resolution === 'MONITOR_CHANGED'
+        ? {
+            title: 'Closed: the monitor was paused, resumed or given a new URL',
+            time: incident.resolvedAt,
+            detail: 'It had not recovered, so no recovery alert was sent.',
+            color: 'bg-slate-400',
+          }
+        : { title: 'Recovered (2 successful checks in a row)', time: incident.resolvedAt, color: 'bg-emerald-500' },
+    )
   }
   for (const d of deliveries.filter((x) => x.kind === 'RECOVERED')) events.push(alertEvent(d))
   if (deliveries.length === 0) {
@@ -101,7 +110,7 @@ function timeline(incident: Incident): Event[] {
 }
 
 function alertEvent(d: Delivery): Event {
-  const what = `${d.kind === 'DOWN' ? 'Down' : 'Recovered'} alert to ${d.channelName} (${d.type.toLowerCase()})`
+  const what = `${d.kind === 'DOWN' ? 'Down' : 'Recovered'} alert to ${d.channelName} (${d.type.toLowerCase()}${d.channelDeleted ? ', since deleted' : ''})`
   if (d.sentAt) return { title: `${what}: sent`, time: d.sentAt, color: 'bg-sky-500' }
   return {
     title: `${what}: ${d.attempts >= 6 ? 'gave up' : d.attempts === 0 ? 'queued' : 'retrying'}`,

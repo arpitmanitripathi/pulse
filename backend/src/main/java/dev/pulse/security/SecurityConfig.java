@@ -30,7 +30,7 @@ import dev.pulse.auth.JwtService;
 /**
  * Who may call what.
  * <ul>
- * <li>Public: register, login, refresh, logout, health, API docs, public status pages.</li>
+ * <li>Public: register, login, refresh, logout, password reset, health, API docs, public status pages.</li>
  * <li>Everything else needs "Authorization: Bearer &lt;access token&gt;".</li>
  * </ul>
  * Stateless: no server-side session, no session cookie. CSRF protection is off
@@ -48,7 +48,7 @@ public class SecurityConfig {
 			.sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 			.authorizeHttpRequests(auth -> auth
 				.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login", "/api/auth/refresh",
-						"/api/auth/logout").permitAll()
+						"/api/auth/logout", "/api/auth/forgot-password", "/api/auth/reset-password").permitAll()
 				.requestMatchers(HttpMethod.GET, "/api/public/**").permitAll()
 				.requestMatchers("/actuator/health", "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**")
 					.permitAll()

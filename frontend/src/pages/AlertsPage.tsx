@@ -3,6 +3,7 @@ import { api, ApiError } from '../api/client'
 import type { AlertChannel, ChannelType } from '../api/types'
 import { Button, Card, Empty, ErrorNote, Field, Loading, PageTitle, Select, TextInput } from '../components/ui'
 import { useApi } from '../lib/useApi'
+import { useConfirm } from '../lib/useConfirm'
 
 export const MAX_CHANNELS = 5
 
@@ -66,6 +67,7 @@ export function AlertsPage() {
 function ChannelRow({ channel, onDeleted }: { channel: AlertChannel; onDeleted: () => void }) {
   const [result, setResult] = useState<{ ok: boolean; text: string }>()
   const [busy, setBusy] = useState(false)
+  const [confirm, confirmDialog] = useConfirm()
 
   async function test() {
     setBusy(true)
@@ -81,7 +83,12 @@ function ChannelRow({ channel, onDeleted }: { channel: AlertChannel; onDeleted: 
   }
 
   async function remove() {
-    if (!window.confirm(`Delete the channel "${channel.name}"?`)) return
+    const ok = await confirm({
+      title: `Delete "${channel.name}"?`,
+      message: 'It stops receiving alerts, and alerts still waiting to be sent to it are dropped.',
+      confirmLabel: 'Delete channel',
+    })
+    if (!ok) return
     setBusy(true)
     try {
       await api(`/api/alert-channels/${channel.id}`, { method: 'DELETE' })
@@ -94,6 +101,7 @@ function ChannelRow({ channel, onDeleted }: { channel: AlertChannel; onDeleted: 
 
   return (
     <li className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      {confirmDialog}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="font-medium">

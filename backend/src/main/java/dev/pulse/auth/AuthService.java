@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import dev.pulse.common.ApiException;
+import dev.pulse.common.FieldValidationException;
 
 @Service
 public class AuthService {
@@ -29,6 +30,8 @@ public class AuthService {
 	private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 	private static final String INVALID_LOGIN = "Invalid email or password.";
 	private static final String INVALID_SESSION = "Your session has ended. Please log in again.";
+	static final String TOO_COMMON = "This password is too common and easy to guess. Choose another one.";
+	private static final SecureRandom RANDOM = new SecureRandom();
 
 	private final UserRepository users;
 	private final RefreshTokenRepository refreshTokens;
@@ -36,34 +39,46 @@ public class AuthService {
 	private final JwtService jwtService;
 	private final AuthProperties properties;
 	private final Clock clock;
-	private final SecureRandom random = new SecureRandom();
+	private final CommonPasswords commonPasswords;
 
 	/** Compared against when the email is unknown, so both cases take the same time. */
 	private final String dummyHash;
 
 	public AuthService(UserRepository users, RefreshTokenRepository refreshTokens, PasswordEncoder passwordEncoder,
-			JwtService jwtService, AuthProperties properties, Clock clock) {
+			JwtService jwtService, AuthProperties properties, Clock clock, CommonPasswords commonPasswords) {
 		this.users = users;
 		this.refreshTokens = refreshTokens;
 		this.passwordEncoder = passwordEncoder;
 		this.jwtService = jwtService;
 		this.properties = properties;
 		this.clock = clock;
+		this.commonPasswords = commonPasswords;
 		this.dummyHash = passwordEncoder.encode("dummy-password-for-timing");
 	}
 
 	@Transactional
 	public User register(String rawEmail, String password) {
 		String email = normalizeEmail(rawEmail);
-		if (password.getBytes(StandardCharsets.UTF_8).length > MAX_PASSWORD_BYTES) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "Password must be at most 72 bytes.");
-		}
+		checkNewPassword(password);
 		if (users.existsByEmail(email)) {
 			throw new ApiException(HttpStatus.CONFLICT, "An account with this email already exists.");
 		}
 		User user = users.save(new User(email, passwordEncoder.encode(password), clock.instant()));
 		log.info("auth.registered user_id={}", user.getId());
 		return user;
+	}
+
+	/**
+	 * Rules for a new password, beyond the 10-character minimum checked on the request:
+	 * at most 72 bytes (BCrypt reads no more) and not a common password.
+	 */
+	void checkNewPassword(String password) {
+		if (password.getBytes(StandardCharsets.UTF_8).length > MAX_PASSWORD_BYTES) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "Password must be at most 72 bytes.");
+		}
+		if (commonPasswords.contains(password)) {
+			throw new FieldValidationException("password", TOO_COMMON);
+		}
 	}
 
 	@Transactional
@@ -130,9 +145,10 @@ public class AuthService {
 		return email.trim().toLowerCase(Locale.ROOT);
 	}
 
-	private String newRandomToken() {
+	/** 256 random bits, URL-safe. */
+	static String newRandomToken() {
 		byte[] bytes = new byte[32];
-		random.nextBytes(bytes);
+		RANDOM.nextBytes(bytes);
 		return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
 	}
 

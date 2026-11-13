@@ -21,6 +21,7 @@ import dev.pulse.monitor.MonitorRequests.CreateMonitorRequest;
 import dev.pulse.monitor.MonitorRequests.UpdateMonitorRequest;
 import dev.pulse.security.SsrfGuard;
 import dev.pulse.security.SsrfGuard.UnsafeUrlException;
+import dev.pulse.statuspage.PublicStatusService;
 
 @Service
 public class MonitorService {
@@ -35,14 +36,16 @@ public class MonitorService {
 	private final SsrfGuard ssrfGuard;
 	private final JdbcTemplate jdbc;
 	private final Clock clock;
+	private final PublicStatusService publicStatus;
 
 	public MonitorService(MonitorRepository monitors, UserRepository users, SsrfGuard ssrfGuard, JdbcTemplate jdbc,
-			Clock clock) {
+			Clock clock, PublicStatusService publicStatus) {
 		this.monitors = monitors;
 		this.users = users;
 		this.ssrfGuard = ssrfGuard;
 		this.jdbc = jdbc;
 		this.clock = clock;
+		this.publicStatus = publicStatus;
 	}
 
 	@Transactional(readOnly = true)
@@ -98,13 +101,18 @@ public class MonitorService {
 		if (request.hasExpectedStatus()) {
 			monitor.changeExpectedStatus(request.getExpectedStatus());
 		}
+		publicStatus.evictPagesShowing(monitor.getId());
 		return monitor;
 	}
 
 	@Transactional
 	public Monitor pause(UUID userId, UUID monitorId) {
 		Monitor monitor = find(userId, monitorId);
-		monitor.pause();
+		if (monitor.isActive()) {
+			monitor.pause();
+			closeOpenIncident(monitor.getId()); // the outage ends where monitoring stops
+			publicStatus.evictPagesShowing(monitor.getId());
+		}
 		return monitor;
 	}
 
@@ -113,23 +121,27 @@ public class MonitorService {
 		Monitor monitor = find(userId, monitorId);
 		if (monitor.resume(clock.instant())) {
 			closeOpenIncident(monitor.getId());
+			publicStatus.evictPagesShowing(monitor.getId());
 		}
 		return monitor;
 	}
 
 	@Transactional
 	public void delete(UUID userId, UUID monitorId) {
-		monitors.delete(find(userId, monitorId));
+		Monitor monitor = find(userId, monitorId);
+		publicStatus.evictPagesShowing(monitor.getId()); // before the delete removes the page links
+		monitors.delete(monitor);
 		log.info("monitor.deleted monitor_id={} user_id={}", monitorId, userId);
 	}
 
 	/**
-	 * Ends an open incident without a RECOVERED alert: nothing recovered, the user
-	 * changed what is monitored (or restarted it after a pause).
+	 * Ends an open incident without a RECOVERED alert: nothing recovered, the user paused the
+	 * monitor, resumed it or changed what is monitored. Recorded as MONITOR_CHANGED.
 	 */
-	private void closeOpenIncident(java.util.UUID monitorId) {
+	private void closeOpenIncident(UUID monitorId) {
 		Instant now = clock.instant();
-		int closed = jdbc.update("UPDATE incidents SET resolved_at = ? WHERE monitor_id = ? AND resolved_at IS NULL",
+		int closed = jdbc.update(
+				"UPDATE incidents SET resolved_at = ?, resolution = 'MONITOR_CHANGED' WHERE monitor_id = ? AND resolved_at IS NULL",
 				OffsetDateTime.ofInstant(now, ZoneOffset.UTC), monitorId);
 		if (closed > 0) {
 			log.info("incident.closed_by_change monitor_id={}", monitorId);

@@ -72,16 +72,20 @@ export interface MonitorStats {
   series: StatsPoint[]
 }
 
+export type Resolution = 'RECOVERED' | 'MONITOR_CHANGED'
+
 export type SummaryStatus = 'PENDING' | 'DONE' | 'FAILED' | 'SKIPPED'
 
 export interface Delivery {
-  channelId: string
+  /** Null once the channel has been deleted; the record of the alert is kept. */
+  channelId: string | null
   channelName: string
   type: ChannelType
   kind: 'DOWN' | 'RECOVERED'
   attempts: number
   sentAt: string | null
   lastError: string | null
+  channelDeleted: boolean
 }
 
 export interface Incident {
@@ -90,6 +94,8 @@ export interface Incident {
   monitorName: string
   openedAt: string
   resolvedAt: string | null
+  /** Why it closed: it recovered, or the monitor was paused, resumed or got a new URL. Null while open. */
+  resolution: Resolution | null
   firstErrorType: ErrorType
   summary: string | null
   summaryStatus: SummaryStatus
@@ -117,7 +123,7 @@ export interface StatusPage {
 export interface PublicStatus {
   title: string
   monitors: PublicMonitor[]
-  incidents: { monitorName: string; openedAt: string; resolvedAt: string | null }[]
+  incidents: { monitorName: string; openedAt: string; resolvedAt: string | null; resolution: Resolution | null }[]
   generatedAt: string
 }
 

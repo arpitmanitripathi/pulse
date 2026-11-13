@@ -53,9 +53,10 @@ This document is the reference for how it works and why. Decisions are recorded 
 | Hourly rollup retention | 90 days |
 | Status page cache | 30 s in Redis |
 | Rate limit, public API | 60 requests / min / IP |
-| Rate limit, login + register | 10 requests / min / IP |
+| Rate limit, login, register, password reset | 10 requests / min / IP (shared) |
 | Per user | 20 monitors, 5 alert channels, 3 status pages |
-| Passwords | 10 characters to 72 bytes |
+| Passwords | 10 characters to 72 bytes, not in the bundled list of common passwords (case-insensitive) |
+| Password reset link | valid 30 min, single use; max 3 reset emails per address per hour |
 | Check User-Agent | `PulseMonitor/1.0` |
 
 ## Architecture
@@ -104,11 +105,12 @@ No database transaction is ever held open during an HTTP check.
 |---|---|
 | `users` | id (UUID), email (unique, lower-case), password_hash, created_at |
 | `refresh_tokens` | id, user_id, token_hash, expires_at, revoked_at |
-| `monitors` | id, user_id, name, url, method (GET/HEAD), interval_s, timeout_ms, expected_status (null), active, **state** (UP/DOWN/UNKNOWN), consecutive_failures, consecutive_successes, **next_check_at**, last_checked_at, created_at |
+| `password_reset_tokens` | id, user_id, token_hash (unique), expires_at, used_at, created_at |
+| `monitors` | id, user_id, name, url, method (GET/HEAD), interval_s, timeout_ms, expected_status (null), active, **state** (UP/DOWN/UNKNOWN), consecutive_failures, consecutive_successes, **next_check_at**, last_checked_at, **reset_at** (last create / URL change / resume), created_at |
 | `check_results` | id, monitor_id, checked_at, success, status_code (null), latency_ms, error_type (NONE/TIMEOUT/DNS/TLS/CONNECTION/STATUS/BLOCKED), error_message |
-| `incidents` | id, monitor_id, opened_at, resolved_at (null), first_error_type, **summary**, summary_status (PENDING/DONE/FAILED/SKIPPED), summary_attempts, summary_next_attempt_at |
+| `incidents` | id, monitor_id, opened_at, resolved_at (null), **resolution** (RECOVERED / MONITOR_CHANGED, set with resolved_at), first_error_type, **summary**, summary_status (PENDING/DONE/FAILED/SKIPPED), summary_attempts, summary_next_attempt_at |
 | `alert_channels` | id, user_id, type (EMAIL/SLACK/DISCORD), target, name, created_at |
-| `alert_outbox` | id, incident_id, channel_id, kind (DOWN/RECOVERED), attempts, next_attempt_at, sent_at, last_error · **unique (incident_id, channel_id, kind)** |
+| `alert_outbox` | id, incident_id, channel_id (null once the channel is deleted), channel_name and channel_type (copied when the channel is deleted), kind (DOWN/RECOVERED), attempts, next_attempt_at, sent_at, last_error · **unique (incident_id, channel_id, kind)** |
 | `hourly_rollups` | monitor_id, hour (UTC), checks, failures, latency_p50, latency_p95 (successful checks only; null if none) · primary key (monitor_id, hour) |
 | `status_pages` | id, user_id, slug (unique), title, created_at |
 | `status_page_monitors` | status_page_id, monitor_id, position |
@@ -134,10 +136,14 @@ classify the result: NONE, TIMEOUT, DNS, TLS, CONNECTION, STATUS or BLOCKED → 
 **D. Incident engine (one transaction, monitor row locked).**
 Insert `check_results` → update counters →
 - `UP/UNKNOWN` and failures reach 3 → `DOWN`, insert incident (summary PENDING), insert one DOWN outbox row per channel.
-- `DOWN` and successes reach 2 → `UP`, set `resolved_at`, insert one RECOVERED outbox row per channel.
+- `DOWN` and successes reach 2 → `UP`, set `resolved_at` and resolution RECOVERED, insert one RECOVERED outbox row per channel.
 - `UNKNOWN` and first success → `UP` (no alert).
-- DOWN alerts go to every channel the user has; RECOVERED alerts only to channels that got the DOWN alert.
-- A result whose URL no longer matches the monitor (changed during the check) is dropped.
+- DOWN alerts go to every channel the user has; RECOVERED alerts only to channels that got the DOWN alert and still exist.
+- Deleting a channel drops its alerts that are still waiting to be sent, and keeps the record of the ones that were
+  sent or given up (with the channel's name and type), so an incident's history stays true.
+- A result whose URL no longer matches the monitor (changed during the check), or for a paused monitor, is dropped.
+- Pausing a monitor, resuming it or changing its URL closes its open incident at that moment with resolution
+  MONITOR_CHANGED and no RECOVERED alert: nothing recovered, monitoring stopped or moved.
 
 **E. Alert dispatcher (every 5 s).** Claim up to 50 due unsent outbox rows with `SKIP LOCKED`, add 1 to `attempts`
 and push `next_attempt_at` 2 minutes out (a lease), commit → send each on a virtual thread with no transaction open →
@@ -148,15 +154,18 @@ a crash between sending and recording `sent_at` can send that one message again.
 
 **F. AI summary (every 5 s).** If no API key is set, every PENDING incident becomes SKIPPED and nothing is sent.
 Otherwise claim up to 10 PENDING incidents with `SKIP LOCKED` and a 1-minute lease (`summary_next_attempt_at`),
-commit → send the monitor's name, URL and last 20 checks with no transaction open → save the text (max 400
+commit → send the monitor's name, URL and last 20 checks since the monitor's `reset_at` (times given relative to
+when it was marked down) with no transaction open → save the text (max 400
 characters) as DONE. On failure retry once after 30 s, then FAILED. Shown on the dashboard only, never on the
-public page. The prompt allows only the data given; no guessing about infrastructure. The output is plain text
+public page. The prompt allows only the data given; no guessing about infrastructure; explains what 4xx, 5xx and
+each error type mean; and asks for no dates or times (the page shows them in the reader's time zone). The output is plain text
 and is always displayed as text, never as HTML.
 
 **G. Public status page.** `GET /api/public/status/{slug}` → page title and, per monitor in the page's order: name,
 state (UP/DOWN/UNKNOWN/PAUSED), uptime 24 h / 7 d / 30 d, 90 daily uptime bars, hourly latency for 24 h; plus incidents
-of the last 30 days (monitor name, opened, resolved). Cached in Redis for 30 s; editing or deleting the page clears
-its cache. No AI text, no URLs, no ids, no error details. If Redis is down the page is built without the cache.
+of the last 30 days (monitor name, opened, resolved, resolution). Cached in Redis for 30 s; editing or deleting the page,
+or changing, pausing, resuming or deleting one of its monitors, clears its cache. Browsers are told not to keep their
+own copy (`Cache-Control: no-cache`), so a cleared cache shows at once. No AI text, no URLs, no ids, no error details. If Redis is down the page is built without the cache.
 
 **Stats rules (dashboard and public page).**
 - Uptime % = successful checks ÷ all checks, rounded *down* to 2 decimals (100.00 only with zero failures).
@@ -182,6 +191,13 @@ missed run is repaired by the next one. Daily at 03:00 UTC: delete raw checks ol
 401 and take the same time. Access tokens are HS256 JWTs (15 min). Refresh tokens are 256 random bits,
 stored only as a SHA-256 hash, sent as an `httpOnly; Secure; SameSite=Strict; Path=/api/auth` cookie and
 rotated on every use. Presenting an already-rotated token ends every session of that user.
+Passwords that appear in a bundled list of common passwords are refused at registration and reset.
+
+**Password reset.** `POST /api/auth/forgot-password` always answers 204, whether or not the email has an account,
+so it can't be used to find out who is registered; the email is sent in the background. If the account exists, a
+256-bit random token (stored only as a SHA-256 hash) is emailed as a link to `/reset-password?token=…`, valid 30 min,
+max 3 emails per address per hour. `POST /api/auth/reset-password` checks the new password first, then consumes the
+token atomically (single use), sets the new password and ends every session of that user.
 
 **Authorisation.** Every user-owned resource is filtered by the logged-in user; another user's id
 returns **404**, not 403, so ids can't be probed.
@@ -202,7 +218,7 @@ returns **404**, not 403, so ids can't be probed.
 `https://discord.com/api/webhooks/…` (or `discordapp.com`). They still pass the SSRF guard when saved and when sent.
 A webhook URL works like a password, so the API only ever returns it masked.
 
-**Rate limits.** Redis fixed window per IP on login + register (10 / min, shared) and `/api/public/**`
+**Rate limits.** Redis fixed window per IP on login, register, forgot-password and reset-password (10 / min, shared) and `/api/public/**`
 (60 / min). Refresh and logout are not limited: the refresh token can't be guessed, and the app calls refresh
 on every page load. If Redis is down, requests are allowed rather than blocked.
 
@@ -211,6 +227,7 @@ on every page load. If Redis is down, requests are allowed rather than blocked.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/auth/register` · `/login` · `/refresh` · `/logout` | Auth |
+| POST | `/api/auth/forgot-password` · `/reset-password` | Password reset by email link |
 | GET | `/api/me` | Current user |
 | GET, POST | `/api/monitors` | List with state + 24 h uptime (`uptime24h`, on every monitor response) / Create |
 | GET, PATCH, DELETE | `/api/monitors/{id}` | One monitor |
@@ -225,7 +242,7 @@ on every page load. If Redis is down, requests are allowed rather than blocked.
 | GET | `/actuator/health` | Health |
 
 ## Frontend pages
-`/login`, `/register` · `/monitors` (list: state, 24 h uptime, latency sparkline) · `/monitors/new` ·
+`/login`, `/register`, `/forgot-password`, `/reset-password` · `/monitors` (list: state, 24 h uptime, latency sparkline) · `/monitors/new` ·
 `/monitors/:id` (latency chart, uptime, recent checks, incidents; edit, pause/resume, delete) ·
 `/incidents/:id` (timeline + AI summary) · `/alerts` (channels + test button) ·
 `/status-pages` (create, edit, delete, link to the public page) · public `/s/:slug`.
@@ -332,3 +349,16 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-12 | The monitor list gets each sparkline from `/stats?window=24h` (one call per monitor, max 20) | Reuses the stats API; 20 small calls every 30 s is fine at this scale |
 | 2026-11-12 | Monitor editing happens on the monitor's page, status page editing on `/status-pages` | Fewer routes; the form is the same component as for creating |
 | 2026-11-12 | The auth rate limit covers login and register only, not refresh or logout | Found in the browser test: every page load refreshes the session, so 10 page loads a minute logged a user out; a 256-bit refresh token can't be guessed, so limiting it protected nothing |
+| 2026-11-13 | Incidents record why they closed (`resolution`, migration V5); pausing closes the open incident | Found in manual testing: an incident closed by pause/resume was shown as "Recovered" and, publicly, as "down 5 h" although nothing was being checked |
+| 2026-11-13 | Check results for a paused monitor are dropped | A check in flight when the monitor is paused must not reopen an incident on it |
+| 2026-11-13 | The AI only gets checks since the monitor's last reset (`monitors.reset_at`, V5), with relative times | Found in manual testing: checks from before a pause were sent, and the summary dated the outage from them |
+| 2026-11-13 | The AI prompt explains 4xx vs 5xx and each error type, and forbids dates and times | 6 of 11 real summaries called a 404 a "server error"; UTC times next to local times read as a contradiction |
+| 2026-11-13 | Public status responses carry `Cache-Control: no-cache` instead of `max-age=30` | Reproduced in Chrome: after an edit the server returned the new page but the browser kept showing its own 30 s copy. Redis still absorbs the load |
+| 2026-11-13 | Changing, pausing, resuming or deleting a monitor clears the cache of every status page that shows it | Edits on the page itself were instant, edits on its monitors took 30 s; now both are instant |
+| 2026-11-13 | Common passwords are refused (SecLists list filtered to 10+ characters, MIT licence); no composition rules | NIST SP 800-63B: block known passwords instead of forcing symbols, which produce predictable passwords |
+| 2026-11-13 | Forgot password by emailed link (V5 table); answer is identical for unknown emails; reset ends every session | Without it a user who forgets the password is locked out for good. Same response hides who has an account; ending sessions locks out whoever caused the reset |
+| 2026-11-13 | Deletes are confirmed in a Pulse dialog, not the browser's `confirm()` | The browser box shows the host name and can't match the app; the dialog focuses Cancel, so Enter never deletes by accident |
+| 2026-11-13 | After a 429 on login the form counts down and disables the button | The server's "try again in N seconds" was static text and looked stuck |
+| 2026-11-13 | A deliberate log-out forgets the current page; an expired session still returns to it | Logging back in after choosing to log out should start at the dashboard, and the next person on that browser shouldn't land on the previous user's page |
+| 2026-11-13 | Deleting an alert channel keeps the record of alerts already sent or given up (V6: `channel_id` becomes null, name and type are copied); only waiting alerts are dropped | Found in manual testing: after deleting and re-adding a channel, an incident whose alerts had been emailed said "No alerts sent" |
+| 2026-11-13 | Password fields have a show/hide (eye) button | Asked for in manual testing; long passphrases are easier to type correctly when they can be checked. It is a real button with a label, so keyboards and screen readers can use it |

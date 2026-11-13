@@ -1,12 +1,13 @@
 import { vi } from 'vitest'
 
-type Handler = (request: { method: string; path: string; body: unknown; headers: Record<string, string> }) => { status?: number; body?: unknown } | Promise<{ status?: number; body?: unknown }>
+type Reply = { status?: number; body?: unknown; headers?: Record<string, string> }
+type Handler = (request: { method: string; path: string; body: unknown; headers: Record<string, string> }) => Reply | Promise<Reply>
 
 /**
  * Replaces fetch with a tiny fake backend: routes are "METHOD /path" (query string included).
  * Every request is recorded in `calls`. An unknown route fails the test loudly.
  */
-export function fakeApi(routes: Record<string, Handler | { status?: number; body?: unknown }>) {
+export function fakeApi(routes: Record<string, Handler | Reply>) {
   const calls: { method: string; path: string; body: unknown; headers: Record<string, string> }[] = []
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const path = String(input)
@@ -21,7 +22,7 @@ export function fakeApi(routes: Record<string, Handler | { status?: number; body
     const status = result.status ?? 200
     return new Response(status === 204 || result.body === undefined ? null : JSON.stringify(result.body), {
       status,
-      headers: { 'Content-Type': status >= 400 ? 'application/problem+json' : 'application/json' },
+      headers: { 'Content-Type': status >= 400 ? 'application/problem+json' : 'application/json', ...result.headers },
     })
   })
   vi.stubGlobal('fetch', fetchMock)

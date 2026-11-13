@@ -61,6 +61,10 @@ public class Monitor {
 	@Column(name = "last_checked_at")
 	private Instant lastCheckedAt;
 
+	/** When the monitor last started fresh; the AI summary ignores older checks. */
+	@Column(name = "reset_at", nullable = false)
+	private Instant resetAt;
+
 	@Column(name = "created_at", nullable = false, updatable = false)
 	private Instant createdAt;
 
@@ -88,6 +92,7 @@ public class Monitor {
 		this.consecutiveFailures = 0;
 		this.consecutiveSuccesses = 0;
 		this.nextCheckAt = now;
+		this.resetAt = now;
 	}
 
 	void rename(String name) {
@@ -180,6 +185,10 @@ public class Monitor {
 
 	public Instant getLastCheckedAt() {
 		return lastCheckedAt;
+	}
+
+	public Instant getResetAt() {
+		return resetAt;
 	}
 
 	public Instant getCreatedAt() {

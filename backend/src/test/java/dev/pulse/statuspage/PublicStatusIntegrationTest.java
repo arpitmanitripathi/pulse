@@ -3,6 +3,8 @@ package dev.pulse.statuspage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -107,7 +109,7 @@ class PublicStatusIntegrationTest {
 		LocalDate today = LocalDate.ofInstant(now, ZoneOffset.UTC);
 		mvc.perform(publicGet("acme"))
 			.andExpect(status().isOk())
-			.andExpect(header().string("Cache-Control", "max-age=30, public"))
+			.andExpect(header().string("Cache-Control", "no-cache")) // the browser must not keep its own copy
 			.andExpect(jsonPath("$.title").value("Acme status"))
 			.andExpect(jsonPath("$.monitors.length()").value(2))
 			.andExpect(jsonPath("$.monitors[0].name").value("Public API"))
@@ -174,6 +176,35 @@ class PublicStatusIntegrationTest {
 	}
 
 	@Test
+	void pausingRenamingOrDeletingAMonitorShowsAtOnce() throws Exception {
+		mvc.perform(publicGet("acme")).andExpect(jsonPath("$.monitors[0].state").value("DOWN")); // now cached
+
+		mvc.perform(post("/api/monitors/" + api + "/pause").header("Authorization", alice.bearer()))
+			.andExpect(status().isOk());
+		mvc.perform(publicGet("acme")).andExpect(jsonPath("$.monitors[0].state").value("PAUSED"));
+
+		mvc.perform(patch("/api/monitors/" + api).header("Authorization", alice.bearer())
+			.contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Renamed API\"}"))
+			.andExpect(status().isOk());
+		mvc.perform(publicGet("acme")).andExpect(jsonPath("$.monitors[0].name").value("Renamed API"));
+
+		mvc.perform(delete("/api/monitors/" + api).header("Authorization", alice.bearer()))
+			.andExpect(status().isNoContent());
+		mvc.perform(publicGet("acme"))
+			.andExpect(jsonPath("$.monitors.length()").value(1))
+			.andExpect(jsonPath("$.monitors[0].name").value("Old site"));
+	}
+
+	@Test
+	void incidentsSayWhetherTheyRecoveredOrMonitoringStopped() throws Exception {
+		mvc.perform(post("/api/monitors/" + api + "/pause").header("Authorization", alice.bearer()));
+
+		mvc.perform(publicGet("acme"))
+			.andExpect(jsonPath("$.incidents[0].resolution").value("MONITOR_CHANGED")) // the open one, closed by the pause
+			.andExpect(jsonPath("$.incidents[1].resolution").value("RECOVERED"));
+	}
+
+	@Test
 	void sixtyRequestsPerMinutePerIp() throws Exception {
 		for (int i = 0; i < 60; i++) {
 			mvc.perform(publicGet("acme")).andExpect(status().isOk());
@@ -222,9 +253,9 @@ class PublicStatusIntegrationTest {
 
 	private void incident(Instant opened, Instant resolved) {
 		jdbc.update("""
-				INSERT INTO incidents (monitor_id, opened_at, resolved_at, first_error_type, summary, summary_status)
-				VALUES (?, ?, ?, 'STATUS', 'secret AI text', 'DONE')""", api, utc(opened),
-				resolved == null ? null : utc(resolved));
+				INSERT INTO incidents (monitor_id, opened_at, resolved_at, resolution, first_error_type, summary, summary_status)
+				VALUES (?, ?, ?, ?, 'STATUS', 'secret AI text', 'DONE')""", api, utc(opened),
+				resolved == null ? null : utc(resolved), resolved == null ? null : "RECOVERED");
 	}
 
 	private static OffsetDateTime utc(Instant instant) {

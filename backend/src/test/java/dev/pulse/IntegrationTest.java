@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
 import dev.pulse.support.FakeDns;
+import dev.pulse.support.RecordingAccountMailer;
 import dev.pulse.support.RecordingAlertSenders;
 import dev.pulse.support.TestUsers;
 
@@ -23,7 +24,8 @@ import dev.pulse.support.TestUsers;
 @Retention(RetentionPolicy.RUNTIME)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
-@Import({ TestcontainersConfiguration.class, FakeDns.class, TestUsers.class, RecordingAlertSenders.Config.class })
+@Import({ TestcontainersConfiguration.class, FakeDns.class, TestUsers.class, RecordingAlertSenders.Config.class,
+		RecordingAccountMailer.Config.class })
 @ActiveProfiles("test")
 public @interface IntegrationTest {
 }

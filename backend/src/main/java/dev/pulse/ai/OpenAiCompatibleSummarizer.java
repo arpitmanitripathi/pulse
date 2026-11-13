@@ -5,8 +5,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -34,11 +34,15 @@ public class OpenAiCompatibleSummarizer implements IncidentSummarizer {
 			You explain website outages to the owner of the website.
 			Use only the check data you are given. Do not guess about their servers, code or hosting.
 			Answer in at most two short sentences, under 300 characters, in plain text without markdown.
-			Say what is failing and since when, then the most likely kind of cause that the data supports,
-			such as server errors, timeouts, DNS, an HTTPS certificate problem or refused connections.""";
-
-	private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss 'UTC'")
-			.withZone(ZoneOffset.UTC);
+			Say what is failing, then the most likely kind of cause that the data supports.
+			Do not write any dates, clock times or time zones; the page already shows when it started.
+			How to read the data:
+			- HTTP 4xx (such as 404 Not Found, 401, 403, 410): the server is up and answered, but the address
+			  is wrong, the page is missing or access is refused. Never call a 4xx a server error.
+			- HTTP 5xx (such as 500, 502, 503, 504): the server, or something in front of it, is failing.
+			- TIMEOUT: no answer within the time limit. DNS: the domain name could not be looked up.
+			  TLS: a problem with the HTTPS certificate or encryption. CONNECTION: the connection was refused
+			  or dropped. BLOCKED: the address is private or reserved, so it was not checked.""";
 
 	private final AiProperties properties;
 	private final JsonMapper json;
@@ -94,16 +98,27 @@ public class OpenAiCompatibleSummarizer implements IncidentSummarizer {
 		StringBuilder text = new StringBuilder()
 				.append("Monitor: ").append(input.monitorName()).append('\n')
 				.append("URL: ").append(input.url()).append('\n')
-				.append("Marked down at: ").append(TIME.format(input.openedAt())).append('\n')
-				.append("Most recent checks, newest first (time | HTTP status | response time | error type | detail):\n");
+				.append("Most recent checks, newest first, timed relative to when the monitor was marked down\n")
+				.append("(when | HTTP status | response time | error type | detail):\n");
 		for (SummaryInput.CheckLine check : input.checks()) {
-			text.append(TIME.format(check.checkedAt())).append(" | ")
+			text.append(relative(check.checkedAt(), input.openedAt())).append(" | ")
 				.append(check.statusCode() == null ? "no response" : check.statusCode()).append(" | ")
 				.append(check.latencyMs()).append(" ms | ")
 				.append(check.errorType()).append(" | ")
 				.append(check.errorMessage() == null ? "-" : check.errorMessage()).append('\n');
 		}
 		return text.toString();
+	}
+
+	/** "when marked down", "2 min 30 s before", "40 s after": no clock time the model could repeat. */
+	static String relative(Instant at, Instant markedDown) {
+		long seconds = Duration.between(at, markedDown).toSeconds();
+		if (seconds == 0) {
+			return "when marked down";
+		}
+		long abs = Math.abs(seconds);
+		String amount = abs < 60 ? abs + " s" : (abs / 60) + " min" + (abs % 60 == 0 ? "" : " " + abs % 60 + " s");
+		return amount + (seconds > 0 ? " before" : " after");
 	}
 
 	private String contentOf(String body) throws SummaryException {

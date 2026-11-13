@@ -5,6 +5,7 @@ import type { Monitor, StatusPage } from '../api/types'
 import { Button, Card, Empty, ErrorNote, Field, Loading, PageTitle, TextInput } from '../components/ui'
 import { SLUG, slugify } from '../lib/status'
 import { useApi } from '../lib/useApi'
+import { useConfirm } from '../lib/useConfirm'
 
 export const MAX_PAGES = 3
 
@@ -73,12 +74,20 @@ export function StatusPagesPage() {
 
 function DeleteButton({ page, onDeleted }: { page: StatusPage; onDeleted: () => void }) {
   const [busy, setBusy] = useState(false)
+  const [confirm, confirmDialog] = useConfirm()
   return (
+    <>
+    {confirmDialog}
     <Button
       variant="danger"
       disabled={busy}
       onClick={async () => {
-        if (!window.confirm(`Delete "${page.title}"? The public link stops working.`)) return
+        const ok = await confirm({
+          title: `Delete "${page.title}"?`,
+          message: `The public link /s/${page.slug} stops working for everyone who has it.`,
+          confirmLabel: 'Delete page',
+        })
+        if (!ok) return
         setBusy(true)
         try {
           await api(`/api/status-pages/${page.id}`, { method: 'DELETE' })
@@ -90,6 +99,7 @@ function DeleteButton({ page, onDeleted }: { page: StatusPage; onDeleted: () => 
     >
       Delete
     </Button>
+    </>
   )
 }
 

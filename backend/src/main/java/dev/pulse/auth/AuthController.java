@@ -29,10 +29,12 @@ public class AuthController {
 	private static final String COOKIE_PATH = "/api/auth";
 
 	private final AuthService authService;
+	private final PasswordResetService passwordReset;
 	private final AuthProperties properties;
 
-	public AuthController(AuthService authService, AuthProperties properties) {
+	public AuthController(AuthService authService, PasswordResetService passwordReset, AuthProperties properties) {
 		this.authService = authService;
+		this.passwordReset = passwordReset;
 		this.properties = properties;
 	}
 
@@ -61,6 +63,20 @@ public class AuthController {
 	public ResponseEntity<Void> logout(@CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken) {
 		authService.logout(refreshToken);
 		return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE, cookie("", Duration.ZERO).toString()).build();
+	}
+
+	@PostMapping("/forgot-password")
+	@Operation(summary = "Email a password reset link. Always 204, whether or not the email has an account.")
+	public ResponseEntity<Void> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+		passwordReset.requestReset(request.email());
+		return ResponseEntity.noContent().build();
+	}
+
+	@PostMapping("/reset-password")
+	@Operation(summary = "Set a new password with the token from the emailed link. Ends every session.")
+	public ResponseEntity<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+		passwordReset.reset(request.token(), request.password());
+		return ResponseEntity.noContent().build();
 	}
 
 	private ResponseEntity<TokenResponse> withSession(AuthService.Session session) {
@@ -103,6 +119,22 @@ public class AuthController {
 		public LoginRequest {
 			email = email == null ? null : email.trim();
 		}
+	}
+
+	public record ForgotPasswordRequest(
+			@NotBlank(message = "Email is required.") @Email(message = "Enter a valid email address.")
+			@Size(max = 254, message = "Email must be at most 254 characters.") String email) {
+
+		public ForgotPasswordRequest {
+			email = email == null ? null : email.trim();
+		}
+	}
+
+	public record ResetPasswordRequest(
+			@NotBlank(message = "The reset link is incomplete.") @Size(max = 200, message = "The reset link is invalid.")
+			String token,
+			@NotBlank(message = "Password is required.")
+			@Size(min = 10, max = 72, message = "Password must be 10 to 72 characters.") String password) {
 	}
 
 	public record TokenResponse(String accessToken, String tokenType, long expiresIn) {

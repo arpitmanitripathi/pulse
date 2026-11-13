@@ -5,11 +5,13 @@ import { SessionProvider } from './auth/SessionProvider'
 import { Layout } from './components/Layout'
 import { AlertsPage } from './pages/AlertsPage'
 import { AuthPage } from './pages/AuthPage'
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage'
 import { IncidentPage } from './pages/IncidentPage'
 import { MonitorsPage } from './pages/MonitorsPage'
 import { NewMonitorPage } from './pages/NewMonitorPage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { PublicStatusPage } from './pages/PublicStatusPage'
+import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { StatusPagesPage } from './pages/StatusPagesPage'
 import { Loading } from './components/ui'
 
@@ -33,6 +35,8 @@ function SessionRoutes() {
         <Route element={<GuestOnly />}>
           <Route path="/login" element={<AuthPage mode="login" />} />
           <Route path="/register" element={<AuthPage mode="register" />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
         </Route>
         <Route element={<RequireSession />}>
           <Route element={<Layout />}>

@@ -87,6 +87,7 @@ function Status({ status }: { status: PublicStatus }) {
                   <span className="font-medium">{i.monitorName}</span>
                   <span className="text-slate-500">
                     {formatTime(i.openedAt)} · down {formatDuration(i.openedAt, i.resolvedAt)}
+                    {i.resolution === 'MONITOR_CHANGED' && ', then monitoring stopped'}
                   </span>
                 </li>
               ))}

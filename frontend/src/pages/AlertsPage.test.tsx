@@ -22,6 +22,27 @@ describe('alerts page', () => {
     expect(await screen.findByText('Slack answered HTTP 404: the webhook was removed.')).toBeInTheDocument()
   })
 
+  it('deleting a channel asks first', async () => {
+    let deleted = false
+    const { calls } = fakeApi({
+      ...signedIn,
+      'GET /api/alert-channels': () => ({ body: deleted ? [] : [slack] }),
+      'DELETE /api/alert-channels/c1': () => {
+        deleted = true
+        return { status: 204 }
+      },
+    })
+    const { user } = renderApp('/alerts')
+
+    await user.click(await screen.findByRole('button', { name: 'Delete' }))
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    await user.click(screen.getByRole('button', { name: 'Delete channel' }))
+    expect(await screen.findByText('No alert channels')).toBeInTheDocument()
+  })
+
   it('adds a channel and shows the server\'s field errors', async () => {
     let created = false
     const { calls } = fakeApi({

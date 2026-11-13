@@ -56,6 +56,7 @@ pulse:
     access-token-ttl: 15m
     refresh-token-ttl: 7d
     cookie-secure: ${COOKIE_SECURE:true}
+    app-url: ${APP_URL:http://localhost:5173}   # the web app's address, used in password reset emails
   rate-limit:
     auth-per-minute: 10
     public-per-minute: 60

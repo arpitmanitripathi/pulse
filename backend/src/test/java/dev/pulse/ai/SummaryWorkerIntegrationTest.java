@@ -64,8 +64,9 @@ class SummaryWorkerIntegrationTest {
 		jdbc.execute("TRUNCATE users CASCADE");
 		userId = testUsers.create("alice@example.com").id();
 		monitorId = jdbc.queryForObject("""
-				INSERT INTO monitors (user_id, name, url, interval_s, state) VALUES (?, 'API', 'https://example.com/', 60, 'DOWN')
-				RETURNING id""", UUID.class, userId);
+				INSERT INTO monitors (user_id, name, url, interval_s, state, reset_at)
+				VALUES (?, 'API', 'https://example.com/', 60, 'DOWN', ?) RETURNING id""", UUID.class, userId,
+				OffsetDateTime.ofInstant(start.minus(Duration.ofDays(1)), ZoneOffset.UTC)); // started fresh a day ago
 	}
 
 	@AfterEach
@@ -95,6 +96,22 @@ class SummaryWorkerIntegrationTest {
 		assertThat(seen.checks()).hasSize(20);
 		assertThat(seen.checks().get(0).errorMessage()).isEqualTo("check 24"); // newest first
 		assertThat(worker().runOnce()).isZero();                               // done: not claimed again
+	}
+
+	@Test
+	void checksFromBeforeTheMonitorLastStartedFreshAreNotSent() throws Exception {
+		check(start.minusSeconds(3600), "before the pause");
+		check(start.minusSeconds(3000), "before the pause too");
+		jdbc.update("UPDATE monitors SET reset_at = ? WHERE id = ?", // resumed 2 minutes ago
+				OffsetDateTime.ofInstant(start.minusSeconds(120), ZoneOffset.UTC), monitorId);
+		check(start.minusSeconds(60), "after resume 1");
+		check(start, "after resume 2");
+		incident();
+
+		worker().runOnce();
+
+		assertThat(fake.inputs.get(0).checks()).extracting(SummaryInput.CheckLine::errorMessage)
+			.containsExactly("after resume 2", "after resume 1");
 	}
 
 	@Test

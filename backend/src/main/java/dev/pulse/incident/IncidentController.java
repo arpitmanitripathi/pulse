@@ -37,7 +37,7 @@ public class IncidentController {
 	static final int LIMIT = 100;
 
 	private static final String SELECT = """
-			SELECT i.id, i.monitor_id, m.name AS monitor_name, i.opened_at, i.resolved_at, i.first_error_type,
+			SELECT i.id, i.monitor_id, m.name AS monitor_name, i.opened_at, i.resolved_at, i.resolution, i.first_error_type,
 			       i.summary, i.summary_status
 			FROM incidents i JOIN monitors m ON m.id = i.monitor_id
 			""";
@@ -69,7 +69,7 @@ public class IncidentController {
 		return jdbc.query(sql.toString(), (rs, i) -> new IncidentResponse(
 				rs.getObject("id", UUID.class), rs.getObject("monitor_id", UUID.class), rs.getString("monitor_name"),
 				rs.getObject("opened_at", OffsetDateTime.class).toInstant(),
-				toInstant(rs.getObject("resolved_at", OffsetDateTime.class)),
+				toInstant(rs.getObject("resolved_at", OffsetDateTime.class)), rs.getString("resolution"),
 				ErrorType.valueOf(rs.getString("first_error_type")), rs.getString("summary"),
 				rs.getString("summary_status"), null), args.toArray());
 	}
@@ -78,17 +78,18 @@ public class IncidentController {
 	@Operation(summary = "One incident, with the delivery state of each alert")
 	public IncidentResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
 		List<Delivery> deliveries = jdbc.query("""
-				SELECT o.channel_id, c.name, c.type, o.kind, o.attempts, o.sent_at, o.last_error
-				FROM alert_outbox o JOIN alert_channels c ON c.id = o.channel_id
-				WHERE o.incident_id = ? ORDER BY c.name, o.kind
+				SELECT o.channel_id, coalesce(c.name, o.channel_name) AS name, coalesce(c.type, o.channel_type) AS type,
+				       o.kind, o.attempts, o.sent_at, o.last_error
+				FROM alert_outbox o LEFT JOIN alert_channels c ON c.id = o.channel_id -- deleted channels keep their history
+				WHERE o.incident_id = ? ORDER BY name, o.kind
 				""", (rs, i) -> new Delivery(rs.getObject("channel_id", UUID.class), rs.getString("name"),
 				AlertChannelType.valueOf(rs.getString("type")), AlertKind.valueOf(rs.getString("kind")),
 				rs.getInt("attempts"), toInstant(rs.getObject("sent_at", OffsetDateTime.class)),
-				rs.getString("last_error")), id);
+				rs.getString("last_error"), rs.getObject("channel_id") == null), id);
 		return jdbc.query(SELECT + " WHERE i.id = ? AND m.user_id = ?", (rs, i) -> new IncidentResponse(
 				rs.getObject("id", UUID.class), rs.getObject("monitor_id", UUID.class), rs.getString("monitor_name"),
 				rs.getObject("opened_at", OffsetDateTime.class).toInstant(),
-				toInstant(rs.getObject("resolved_at", OffsetDateTime.class)),
+				toInstant(rs.getObject("resolved_at", OffsetDateTime.class)), rs.getString("resolution"),
 				ErrorType.valueOf(rs.getString("first_error_type")), rs.getString("summary"),
 				rs.getString("summary_status"), deliveries), id, CurrentUser.id(jwt))
 			.stream().findFirst()
@@ -99,8 +100,12 @@ public class IncidentController {
 		return value == null ? null : value.toInstant();
 	}
 
-	/** {@code alerts} is only filled in for a single incident. */
+	/**
+	 * {@code resolution}: RECOVERED (2 good checks) or MONITOR_CHANGED (paused, resumed or new URL); null while open.
+	 * {@code alerts} is only filled in for a single incident.
+	 */
 	public record IncidentResponse(UUID id, UUID monitorId, String monitorName, Instant openedAt, Instant resolvedAt,
+			String resolution,
 			ErrorType firstErrorType, String summary, String summaryStatus, List<Delivery> alerts) {
 	}
 
