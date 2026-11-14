@@ -73,7 +73,7 @@ Spring Boot app  (1..N identical instances)
   ├─ AI summarizer ───── fills incidents.summary
   └─ Jobs ────────────── hourly rollup, daily retention (Postgres advisory lock)
         │                 │                 │
-   PostgreSQL           Redis        External: checked sites, Anthropic API,
+   PostgreSQL           Redis        External: checked sites, AI API,
    (all data)       (cache, limits)  SMTP, Slack, Discord
 ```
 One deployable app. No microservices, no message broker: PostgreSQL coordinates the instances.
@@ -268,12 +268,11 @@ later). Caddy serves the built React files, proxies `/api/*` to the app (so ther
 Let's Encrypt certificate itself. From outside, only `/actuator/health` is reachable (status only, no details, so
 Pulse can monitor itself); the rest of `/actuator` and Swagger are not.
 
-**Machine.** One Azure VM `Standard_B2ats_v2` (2 vCPU, 1 GiB RAM, 64 GB Premium SSD, 2 GB swap file) in Korea
-Central, Ubuntu 24.04 with automatic security updates. Everything runs in Docker Compose (`deploy/`): Caddy, the app,
+**Machine.** One Azure VM (2 vCPU, 1 GiB RAM, 64 GB SSD, 2 GB swap file), Ubuntu 24.04 with automatic security
+updates. Everything runs in Docker Compose (`deploy/`): Caddy, the app,
 PostgreSQL 17 and Redis, each with a memory limit so the four fit in about 830 MB.
 
-**Network.** The VM sits in a private network (`pulse-vnet`, app subnet 10.0.1.0/24). Two firewalls, Azure's
-network security group and `ufw` on the VM, let in only 80 and 443 from anywhere and SSH (key only, no passwords)
+**Network.** Two firewalls, Azure's network security group and `ufw` on the VM, let in only 80 and 443 from anywhere and SSH (key only, no passwords)
 from the developer's IP. PostgreSQL and Redis publish no ports; only the app reaches them, over the Compose network.
 
 **Releases.** When CI passes on `main`, a GitHub Actions workflow builds two `linux/amd64` images, the app and the
@@ -294,7 +293,7 @@ pulse/
   frontend/     React app
   loadtest/     load-test harness
   deploy/       docker-compose.prod.yml, Caddyfile, deploy notes
-  docs/         this document, architecture diagram, screenshots
+  docs/         this document
   docker-compose.yml   local stack
   README.md  BENCHMARK.md
 ```
@@ -305,7 +304,7 @@ pulse/
 - **Outbox:** duplicate insert rejected; retry backoff timing; RECOVERED is never sent before DOWN.
 - **Checker:** WireMock for 200, 503, slow (timeout), redirect chain, and connection refused.
 - **SSRF:** every blocked range, IPv6, a hostname resolving to a private IP (fake DNS, no internet needed).
-- **AI:** fake summarizer; Anthropic down → incident and alert still created, summary FAILED.
+- **AI:** fake summarizer; AI provider down → incident and alert still created, summary FAILED.
 - **API:** auth required; cross-user access returns 404; validation errors return problem+json.
 - **Jobs:** rollup values against hand-computed numbers; retention deletes only old rows.
 - **Frontend:** monitor list, create form validation, status page render.
@@ -329,75 +328,72 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 
 ## Decisions
 
-| Date | Decision | Why |
-|---|---|---|
-| 2026-11-10 | JWTs are validated by Spring Security's resource-server support (Nimbus, HS256), not a hand-written filter | Less custom security code; the framework's filter is battle-tested |
-| 2026-11-10 | Reusing an already-rotated refresh token revokes all of that user's refresh tokens | A reused token means it was probably stolen; standard refresh-token reuse detection |
-| 2026-11-10 | Passwords: 10 characters minimum, 72 bytes maximum | BCrypt only reads the first 72 bytes; Spring Security rejects longer input |
-| 2026-11-10 | `GET /api/me`, Swagger UI and the problem+json error handler ship with auth | Auth can be tried by hand before the frontend exists |
-| 2026-11-10 | Changing a monitor's URL, or resuming it, resets it to UNKNOWN with zero counters and checks it right away | Old results describe a different target or an old period; any open incident is closed when this happens |
-| 2026-11-10 | The 20-monitor limit is enforced under a row lock on the user (409 when reached) | Two parallel creates at 19 must not end at 21 |
-| 2026-11-10 | SSRF guard also rejects `user:password@` URLs, hostnames that don't resolve, and extra reserved ranges | `user@host` is a classic way to disguise the real host; an unresolvable URL is a typo the user should see at once |
-| 2026-11-10 | The monitor list's 24 h uptime field comes with the stats work | Uptime is computed from check results and rollups |
-| 2026-11-11 | IPv6 targets must be global unicast (2000::/3) minus 2001::/23, 2001:db8::/32 and 2002::/16; IPv4 documentation and 6to4-relay ranges are blocked | An allow-list fails closed for ranges we didn't think of; NAT64, 6to4 and Teredo can wrap a private IPv4 address |
-| 2026-11-11 | Checks use Apache HttpClient 5 instead of the JDK `HttpClient` | It accepts a custom DNS resolver, so the checker connects only to addresses the SSRF guard approved; the JDK client always resolves on its own |
-| 2026-11-11 | Every redirect target goes through the SSRF guard; redirects are not followed when `expected_status` is 3xx | A public site can redirect to a private address; a user expecting a 301 wants to see the 301 |
-| 2026-11-11 | New error type BLOCKED (migration V2) for checks refused by the SSRF guard | Users should see why a check failed; DNS and CONNECTION would be misleading |
-| 2026-11-11 | Latency is time to the status line; the response body is never downloaded | Measures what users feel when a site is slow, and a huge or endless body can't tie up the checker |
-| 2026-11-11 | `GET /api/monitors/{id}/checks` ships with the checker: newest first, last 24 h, `page`/`size` (max 200) and `hasMore` | Results must be visible as soon as they exist; `hasMore` avoids a count query |
-| 2026-11-11 | The scheduler can be switched off with `pulse.scheduler.enabled=false` (off in tests) | Tests drive the scheduler by hand so they are deterministic |
-| 2026-11-11 | Alerts are claimed with a 2-minute lease and sent outside any transaction; delivery is at-least-once | Holding a row lock during a 10 s webhook call would block other work; a rare repeat message is better than a lost one |
-| 2026-11-11 | RECOVERED goes only to channels that got the DOWN alert, and waits until that DOWN was sent or given up | "Recovered" about an outage you never heard of is noise; it must never arrive before "down" |
-| 2026-11-11 | Slack and Discord targets must be on the provider's official webhook host, over HTTPS | The strongest SSRF rule is to allow only the hosts we actually need |
-| 2026-11-11 | Webhook URLs are shown masked in API responses | Anyone with the URL can post to the channel |
-| 2026-11-11 | Changing a monitor's URL or resuming it closes its open incident without a RECOVERED alert | Nothing recovered: the user changed what is monitored |
-| 2026-11-11 | A check result whose URL no longer matches the monitor is dropped | It describes the old target |
-| 2026-11-11 | The test-alert endpoint sends directly (not through the outbox), max 5 per minute per user | The user is waiting for an answer; the limit stops it being used to spam an inbox |
-| 2026-11-11 | The incidents API ships with incidents (M4), including alert delivery status per channel | Incidents must be visible as soon as they exist; delivery status explains a missing alert |
-| 2026-11-11 | The health endpoint does not check the email server | An SMTP outage would mark a working app unhealthy and could get it restarted; alert retries already cover it |
-| 2026-11-11 | The summarizer speaks the OpenAI-compatible Chat Completions format, Gemini by default | Gemini has a free tier; the same format works for Gemini, Groq, OpenRouter, GitHub Models and Anthropic, so the provider is a config change |
-| 2026-11-11 | No API key → incidents are marked SKIPPED (migration V3); old incidents are not summarised later | Pulse must work fully without AI; explaining an old outage is not useful |
-| 2026-11-11 | Summaries use a lease column (`summary_next_attempt_at`) instead of holding a row lock during the call | A lock held for a 10 s AI call would block the check processor from resolving that incident |
-| 2026-11-12 | Default model `gemini-3.5-flash-lite`, pinned (not a `-latest` alias) | Tested with a real key: `gemini-2.5-flash` is closed to new users; larger Flash models took 10–60 s; this one answered in 1.6–6 s with accurate summaries. A pinned name can't silently change behaviour |
-| 2026-11-12 | Latency percentiles use successful checks only | A timeout or refused connection has no meaningful response time; mixing them in would hide real slowness |
-| 2026-11-12 | 7 d / 30 d p50 and p95 are hourly percentiles averaged, weighted by successful checks; 24 h is exact | Raw checks are kept 7 days, so exact long-window percentiles are impossible; the weighting keeps busy hours from being outvoted by quiet ones |
-| 2026-11-12 | Uptime is rounded down to 2 decimals; null when there were no checks | 99.996 % must not show as 100.00 %; "no data" is different from 0 % |
-| 2026-11-12 | 7 d is 168 whole UTC hours, 30 d and the 90 bars are whole UTC days; series include empty buckets | Bars and points line up with clock hours and days; charts can show gaps honestly |
-| 2026-11-12 | The rollup job re-rolls from the newest rolled-up hour, upserting | One idempotent rule covers late results, a missed run and a restart |
-| 2026-11-12 | New index `check_results(checked_at)` (migration V4) | The rollup and retention jobs select by time across all monitors; without it each run scans the whole table |
-| 2026-11-12 | Retention deletes raw checks 10,000 rows per transaction | A day of checks for 1,000 monitors is ~1.4 M rows; one huge delete would hold locks and bloat the WAL |
-| 2026-11-12 | Advisory locks are session locks on a connection held for the job's duration | Work inside the job uses other pooled connections; if the instance dies, its connection closes and the lock is freed |
-| 2026-11-12 | Status page slugs: 3–40 of `a–z 0–9 -`, not starting or ending with `-`, unique across all users (409 if taken) | The slug is the public address; uniqueness is global |
-| 2026-11-12 | A status page may only list the owner's monitors (400 otherwise); its cache is cleared after the change commits | Another user's id must not be usable or probable; clearing before commit could re-cache the old version |
-| 2026-11-12 | The public page shows names, state, uptime, latency and incident times only | It is anonymous: URLs, ids, error messages and AI text can reveal internals |
-| 2026-11-12 | TypeScript 6.0, not 7 | typescript-eslint supports TypeScript up to 6.0; the linter must understand the compiler's version |
-| 2026-11-12 | Access token in memory only; session restored from the refresh cookie on load | A token in `localStorage` can be read by any script that runs on the page |
-| 2026-11-12 | Token refresh is single-flight per tab and locked across tabs (Web Locks) | Parallel refreshes with one cookie look like a stolen token and would log the user out everywhere |
-| 2026-11-12 | Data loading with small hooks on `fetch`, polling every 30 s; no data-fetching library | Few screens, simple needs; less to learn and explain |
-| 2026-11-12 | The monitor list gets each sparkline from `/stats?window=24h` (one call per monitor, max 20) | Reuses the stats API; 20 small calls every 30 s is fine at this scale |
-| 2026-11-12 | Monitor editing happens on the monitor's page, status page editing on `/status-pages` | Fewer routes; the form is the same component as for creating |
-| 2026-11-12 | The auth rate limit covers login and register only, not refresh or logout | Found in the browser test: every page load refreshes the session, so 10 page loads a minute logged a user out; a 256-bit refresh token can't be guessed, so limiting it protected nothing |
-| 2026-11-13 | Incidents record why they closed (`resolution`, migration V5); pausing closes the open incident | Found in manual testing: an incident closed by pause/resume was shown as "Recovered" and, publicly, as "down 5 h" although nothing was being checked |
-| 2026-11-13 | Check results for a paused monitor are dropped | A check in flight when the monitor is paused must not reopen an incident on it |
-| 2026-11-13 | The AI only gets checks since the monitor's last reset (`monitors.reset_at`, V5), with relative times | Found in manual testing: checks from before a pause were sent, and the summary dated the outage from them |
-| 2026-11-13 | The AI prompt explains 4xx vs 5xx and each error type, and forbids dates and times | 6 of 11 real summaries called a 404 a "server error"; UTC times next to local times read as a contradiction |
-| 2026-11-13 | Public status responses carry `Cache-Control: no-cache` instead of `max-age=30` | Reproduced in Chrome: after an edit the server returned the new page but the browser kept showing its own 30 s copy. Redis still absorbs the load |
-| 2026-11-13 | Changing, pausing, resuming or deleting a monitor clears the cache of every status page that shows it | Edits on the page itself were instant, edits on its monitors took 30 s; now both are instant |
-| 2026-11-13 | Common passwords are refused (SecLists list filtered to 10+ characters, MIT licence); no composition rules | NIST SP 800-63B: block known passwords instead of forcing symbols, which produce predictable passwords |
-| 2026-11-13 | Forgot password by emailed link (V5 table); answer is identical for unknown emails; reset ends every session | Without it a user who forgets the password is locked out for good. Same response hides who has an account; ending sessions locks out whoever caused the reset |
-| 2026-11-13 | Deletes are confirmed in a Pulse dialog, not the browser's `confirm()` | The browser box shows the host name and can't match the app; the dialog focuses Cancel, so Enter never deletes by accident |
-| 2026-11-13 | After a 429 on login the form counts down and disables the button | The server's "try again in N seconds" was static text and looked stuck |
-| 2026-11-13 | A deliberate log-out forgets the current page; an expired session still returns to it | Logging back in after choosing to log out should start at the dashboard, and the next person on that browser shouldn't land on the previous user's page |
-| 2026-11-13 | Deleting an alert channel keeps the record of alerts already sent or given up (V6: `channel_id` becomes null, name and type are copied); only waiting alerts are dropped | Found in manual testing: after deleting and re-adding a channel, an incident whose alerts had been emailed said "No alerts sent" |
-| 2026-11-13 | Password fields have a show/hide (eye) button | Asked for in manual testing; long passphrases are easier to type correctly when they can be checked. It is a real button with a label, so keyboards and screen readers can use it |
-| 2026-11-13 | The SSRF guard can trust named hosts (`PULSE_SSRF_TRUSTED_HOSTS`): empty by default, exact host names only (an IP address there stops the app at startup), a warning at startup, set only by the load-test stack | The load target must run locally: 1,000 checks a minute against someone else's site would be abuse. Every other URL is still fully checked |
-| 2026-11-13 | Every check result stores the time it was due (`check_results.scheduled_at`, V7) | Check delay is the scheduler's key number and becomes measurable for every check; two results for the same due time would expose a double check |
-| 2026-11-13 | The load test runs on the developer laptop first; `BENCHMARK.md` names the machine; it is repeated on the production server in M9 | Results are needed now for the README; laptop numbers are honest when labelled as such |
-| 2026-11-14 | Production runs on one Azure VM, paid by Azure for Students credit | Free for this project, and the subscription cannot bill beyond its credit |
-| 2026-11-14 | Region Korea Central, VM size `Standard_B2ats_v2` (1 GiB RAM) | The subscription may only use five regions; Korea Central is the only one where this free-tier size is allowed for it |
-| 2026-11-14 | PostgreSQL runs in Docker on the VM, not as Azure Database for PostgreSQL | Creating the free managed server failed with `SkuNotAvailable` in every allowed region tried. It stays private (no published port); nightly `pg_dump` backups replace Azure's automatic ones |
-| 2026-11-14 | Images are built by GitHub Actions and pulled by the VM; deploys are started from the developer machine, not by Actions over SSH | A 1 GiB VM can't build the Java image; SSH is open only to the developer's IP, so GitHub's runners can't reach it, and that is the safer default |
-| 2026-11-14 | Tomcat reads the client IP from `X-Forwarded-For` (`server.forward-headers-strategy: native`) only for requests from private addresses | Behind Caddy every request comes from Caddy's address, so all visitors would share one rate-limit bucket; trusting the header only from the proxy keeps it unspoofable |
-| 2026-11-14 | Memory limits: app 448 MB (heap capped by percentage, Serial GC), PostgreSQL 192 MB, Redis 48 MB (no persistence, LRU), Caddy 64 MB | Keeps the four inside 1 GiB with the swap file as a safety net; Redis holds only rate-limit counters and a 30 s cache, so losing it on restart is harmless |
-| 2026-11-14 | Swagger UI and the OpenAPI document are switched off in production; Caddy proxies only `/api/*` and `/actuator/health` | Useful locally; in production they only enlarge the public surface. Health stays reachable so Pulse can monitor its own deployment |
-| 2026-11-14 | `loadtest/seed.sql` refuses to run unless the server says it is the load-test database | It starts with `TRUNCATE users CASCADE`; a mistaken run against a real database must fail, not wipe it |
+| Decision | Why |
+|---|---|
+| JWTs are validated by Spring Security's resource-server support (Nimbus, HS256), not a hand-written filter | Less custom security code; the framework's filter is battle-tested |
+| Reusing an already-rotated refresh token revokes all of that user's refresh tokens | A reused token means it was probably stolen; standard refresh-token reuse detection |
+| Passwords: 10 characters minimum, 72 bytes maximum | BCrypt only reads the first 72 bytes; Spring Security rejects longer input |
+| Changing a monitor's URL, or resuming it, resets it to UNKNOWN with zero counters and checks it right away | Old results describe a different target or an old period; any open incident is closed when this happens |
+| The 20-monitor limit is enforced under a row lock on the user (409 when reached) | Two parallel creates at 19 must not end at 21 |
+| SSRF guard also rejects `user:password@` URLs, hostnames that don't resolve, and extra reserved ranges | `user@host` is a classic way to disguise the real host; an unresolvable URL is a typo the user should see at once |
+| IPv6 targets must be global unicast (2000::/3) minus 2001::/23, 2001:db8::/32 and 2002::/16; IPv4 documentation and 6to4-relay ranges are blocked | An allow-list fails closed for ranges we didn't think of; NAT64, 6to4 and Teredo can wrap a private IPv4 address |
+| Checks use Apache HttpClient 5 instead of the JDK `HttpClient` | It accepts a custom DNS resolver, so the checker connects only to addresses the SSRF guard approved; the JDK client always resolves on its own |
+| Every redirect target goes through the SSRF guard; redirects are not followed when `expected_status` is 3xx | A public site can redirect to a private address; a user expecting a 301 wants to see the 301 |
+| New error type BLOCKED (migration V2) for checks refused by the SSRF guard | Users should see why a check failed; DNS and CONNECTION would be misleading |
+| Latency is time to the status line; the response body is never downloaded | Measures what users feel when a site is slow, and a huge or endless body can't tie up the checker |
+| `GET /api/monitors/{id}/checks`: newest first, last 24 h, `page`/`size` (max 200) and `hasMore` | `hasMore` avoids a count query |
+| The scheduler can be switched off with `pulse.scheduler.enabled=false` (off in tests) | Tests drive the scheduler by hand so they are deterministic |
+| Alerts are claimed with a 2-minute lease and sent outside any transaction; delivery is at-least-once | Holding a row lock during a 10 s webhook call would block other work; a rare repeat message is better than a lost one |
+| RECOVERED goes only to channels that got the DOWN alert, and waits until that DOWN was sent or given up | "Recovered" about an outage you never heard of is noise; it must never arrive before "down" |
+| Slack and Discord targets must be on the provider's official webhook host, over HTTPS | The strongest SSRF rule is to allow only the hosts we actually need |
+| Webhook URLs are shown masked in API responses | Anyone with the URL can post to the channel |
+| Changing a monitor's URL or resuming it closes its open incident without a RECOVERED alert | Nothing recovered: the user changed what is monitored |
+| A check result whose URL no longer matches the monitor is dropped | It describes the old target |
+| The test-alert endpoint sends directly (not through the outbox), max 5 per minute per user | The user is waiting for an answer; the limit stops it being used to spam an inbox |
+| An incident's API response includes the delivery status of each alert | It explains a missing alert |
+| The health endpoint does not check the email server | An SMTP outage would mark a working app unhealthy and could get it restarted; alert retries already cover it |
+| The summarizer speaks the OpenAI-compatible Chat Completions format, Gemini by default | Gemini has a free tier; the same format works for Gemini, Groq, OpenRouter, GitHub Models and Anthropic, so the provider is a config change |
+| No API key → incidents are marked SKIPPED (migration V3); old incidents are not summarised later | Pulse must work fully without AI; explaining an old outage is not useful |
+| Summaries use a lease column (`summary_next_attempt_at`) instead of holding a row lock during the call | A lock held for a 10 s AI call would block the check processor from resolving that incident |
+| Default model `gemini-3.5-flash-lite`, pinned (not a `-latest` alias) | Tested with a real key: it answered in 1.6–6 s with accurate summaries; larger Flash models took 10–60 s. A pinned name can't silently change behaviour |
+| Latency percentiles use successful checks only | A timeout or refused connection has no meaningful response time; mixing them in would hide real slowness |
+| 7 d / 30 d p50 and p95 are hourly percentiles averaged, weighted by successful checks; 24 h is exact | Raw checks are kept 7 days, so exact long-window percentiles are impossible; the weighting keeps busy hours from being outvoted by quiet ones |
+| Uptime is rounded down to 2 decimals; null when there were no checks | 99.996 % must not show as 100.00 %; "no data" is different from 0 % |
+| 7 d is 168 whole UTC hours, 30 d and the 90 bars are whole UTC days; series include empty buckets | Bars and points line up with clock hours and days; charts can show gaps honestly |
+| The rollup job re-rolls from the newest rolled-up hour, upserting | One idempotent rule covers late results, a missed run and a restart |
+| New index `check_results(checked_at)` (migration V4) | The rollup and retention jobs select by time across all monitors; without it each run scans the whole table |
+| Retention deletes raw checks 10,000 rows per transaction | A day of checks for 1,000 monitors is ~1.4 M rows; one huge delete would hold locks and bloat the WAL |
+| Advisory locks are session locks on a connection held for the job's duration | Work inside the job uses other pooled connections; if the instance dies, its connection closes and the lock is freed |
+| Status page slugs: 3–40 of `a–z 0–9 -`, not starting or ending with `-`, unique across all users (409 if taken) | The slug is the public address; uniqueness is global |
+| A status page may only list the owner's monitors (400 otherwise); its cache is cleared after the change commits | Another user's id must not be usable or probable; clearing before commit could re-cache the old version |
+| The public page shows names, state, uptime, latency and incident times only | It is anonymous: URLs, ids, error messages and AI text can reveal internals |
+| TypeScript 6.0, not 7 | typescript-eslint supports TypeScript up to 6.0; the linter must understand the compiler's version |
+| Access token in memory only; session restored from the refresh cookie on load | A token in `localStorage` can be read by any script that runs on the page |
+| Token refresh is single-flight per tab and locked across tabs (Web Locks) | Parallel refreshes with one cookie look like a stolen token and would log the user out everywhere |
+| Data loading with small hooks on `fetch`, polling every 30 s; no data-fetching library | Few screens, simple needs; less to learn and explain |
+| The monitor list gets each sparkline from `/stats?window=24h` (one call per monitor, max 20) | Reuses the stats API; 20 small calls every 30 s is fine at this scale |
+| Monitor editing happens on the monitor's page, status page editing on `/status-pages` | Fewer routes; the form is the same component as for creating |
+| The auth rate limit covers login and register only, not refresh or logout | Found in the browser test: every page load refreshes the session, so 10 page loads a minute logged a user out; a 256-bit refresh token can't be guessed, so limiting it protected nothing |
+| Incidents record why they closed (`resolution`, migration V5); pausing closes the open incident | Found in manual testing: an incident closed by pause/resume was shown as "Recovered" and, publicly, as "down 5 h" although nothing was being checked |
+| Check results for a paused monitor are dropped | A check in flight when the monitor is paused must not reopen an incident on it |
+| The AI only gets checks since the monitor's last reset (`monitors.reset_at`, V5), with relative times | Found in manual testing: checks from before a pause were sent, and the summary dated the outage from them |
+| The AI prompt explains 4xx vs 5xx and each error type, and forbids dates and times | 6 of 11 real summaries called a 404 a "server error"; UTC times next to local times read as a contradiction |
+| Public status responses carry `Cache-Control: no-cache` instead of `max-age=30` | Reproduced in Chrome: after an edit the server returned the new page but the browser kept showing its own 30 s copy. Redis still absorbs the load |
+| Changing, pausing, resuming or deleting a monitor clears the cache of every status page that shows it | Edits on the page itself were instant, edits on its monitors took 30 s; now both are instant |
+| Common passwords are refused (SecLists list filtered to 10+ characters, MIT licence); no composition rules | NIST SP 800-63B: block known passwords instead of forcing symbols, which produce predictable passwords |
+| Forgot password by emailed link (V5 table); answer is identical for unknown emails; reset ends every session | Without it a user who forgets the password is locked out for good. Same response hides who has an account; ending sessions locks out whoever caused the reset |
+| Deletes are confirmed in a Pulse dialog, not the browser's `confirm()` | The browser box shows the host name and can't match the app; the dialog focuses Cancel, so Enter never deletes by accident |
+| After a 429 on login the form counts down and disables the button | The server's "try again in N seconds" was static text and looked stuck |
+| A deliberate log-out forgets the current page; an expired session still returns to it | Logging back in after choosing to log out should start at the dashboard, and the next person on that browser shouldn't land on the previous user's page |
+| Deleting an alert channel keeps the record of alerts already sent or given up (V6: `channel_id` becomes null, name and type are copied); only waiting alerts are dropped | Found in manual testing: after deleting and re-adding a channel, an incident whose alerts had been emailed said "No alerts sent" |
+| Password fields have a show/hide (eye) button | Asked for in manual testing; long passphrases are easier to type correctly when they can be checked. It is a real button with a label, so keyboards and screen readers can use it |
+| The SSRF guard can trust named hosts (`PULSE_SSRF_TRUSTED_HOSTS`): empty by default, exact host names only (an IP address there stops the app at startup), a warning at startup, set only by the load-test stack | The load target must run locally: 1,000 checks a minute against someone else's site would be abuse. Every other URL is still fully checked |
+| Every check result stores the time it was due (`check_results.scheduled_at`, V7) | Check delay is the scheduler's key number and becomes measurable for every check; two results for the same due time would expose a double check |
+| The load test runs on the developer laptop first; `BENCHMARK.md` names the machine; it is repeated on the production server in M9 | Results are needed now for the README; laptop numbers are honest when labelled as such |
+| Region Korea Central, VM size `Standard_B2ats_v2` (2 vCPU, 1 GiB RAM) | 1 GiB is enough for the stack with the memory limits below |
+| PostgreSQL runs in Docker on the VM, not as a managed database service | One machine and no extra cost. It is never reachable from outside (no published port); nightly `pg_dump` backups do the job of a managed service's automatic ones |
+| Images are built by GitHub Actions and pulled by the VM; deploys are started from the developer machine, not by Actions over SSH | A 1 GiB VM can't build the Java image; SSH is open only to the developer's IP, so GitHub's runners can't reach it, and that is the safer default |
+| Tomcat reads the client IP from `X-Forwarded-For` (`server.forward-headers-strategy: native`) only for requests from private addresses | Behind Caddy every request comes from Caddy's address, so all visitors would share one rate-limit bucket; trusting the header only from the proxy keeps it unspoofable |
+| Memory limits: app 448 MB (heap capped by percentage, Serial GC), PostgreSQL 192 MB, Redis 48 MB (no persistence, LRU), Caddy 64 MB | Keeps the four inside 1 GiB with the swap file as a safety net; Redis holds only rate-limit counters and a 30 s cache, so losing it on restart is harmless |
+| Swagger UI and the OpenAPI document are switched off in production; Caddy proxies only `/api/*` and `/actuator/health` | Useful locally; in production they only enlarge the public surface. Health stays reachable so Pulse can monitor its own deployment |
+| `loadtest/seed.sql` refuses to run unless the server says it is the load-test database | It starts with `TRUNCATE users CASCADE`; a mistaken run against a real database must fail, not wipe it |
