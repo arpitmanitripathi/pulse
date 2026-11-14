@@ -1,0 +1,30 @@
+# Production entry point. SITE_ADDRESS is the public host name; Caddy gets and renews its HTTPS certificate.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# The API. Caddy sets X-Forwarded-For to the visitor's address (it does not pass on a header the visitor sent).
+	handle /api/* {
+		reverse_proxy app:8080
+	}
+
+	# Health only ("UP"/"DOWN", no details), so Pulse can monitor itself. The rest of /actuator stays private.
+	handle /actuator/health {
+		reverse_proxy app:8080
+	}
+
+	# The React app: unknown paths fall back to index.html so client-side routes work on reload.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

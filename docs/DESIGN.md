@@ -29,7 +29,7 @@ This document is the reference for how it works and why. Decisions are recorded 
 | Coverage | JaCoCo ≥ 80 % lines on the backend, enforced in CI |
 | CI | GitHub Actions: backend `mvn verify`, frontend lint + test + build (Node 24), Docker build |
 | Local run | `docker compose up` (app, Postgres, Redis, Mailpit) |
-| Deployment | One AWS EC2 instance, Docker Compose, Caddy for HTTPS |
+| Deployment | One Azure VM (Ubuntu 24.04), Docker Compose, Caddy for HTTPS; images built by GitHub Actions into GitHub Container Registry |
 
 ## Fixed numbers
 
@@ -221,6 +221,8 @@ A webhook URL works like a password, so the API only ever returns it masked.
 **Rate limits.** Redis fixed window per IP on login, register, forgot-password and reset-password (10 / min, shared) and `/api/public/**`
 (60 / min). Refresh and logout are not limited: the refresh token can't be guessed, and the app calls refresh
 on every page load. If Redis is down, requests are allowed rather than blocked.
+The client IP is the connection's address. Behind Caddy, Tomcat takes it from `X-Forwarded-For`, but only when the
+request comes from a private address (the proxy on the Docker network); Caddy replaces any `X-Forwarded-For` a visitor sends.
 
 ## API
 
@@ -261,9 +263,28 @@ raw HTML anywhere).
 (`PULSE_API`, default `http://localhost:8080`), so the browser sees one origin, exactly as behind Caddy.
 
 ## Deployment
-One domain. Caddy serves the built React files and proxies `/api/*` to the app, so there is no CORS.
-GitHub Actions builds the Docker image, pushes it to GitHub Container Registry, then SSHes into EC2 and runs
-`docker compose pull && docker compose up -d`. Postgres and Redis run as containers on the same instance, with a volume for Postgres.
+One domain, `https://pulse.koreacentral.cloudapp.azure.com` (Azure's free DNS label; a custom domain can be added
+later). Caddy serves the built React files, proxies `/api/*` to the app (so there is no CORS) and gets and renews the
+Let's Encrypt certificate itself. From outside, only `/actuator/health` is reachable (status only, no details, so
+Pulse can monitor itself); the rest of `/actuator` and Swagger are not.
+
+**Machine.** One Azure VM `Standard_B2ats_v2` (2 vCPU, 1 GiB RAM, 64 GB Premium SSD, 2 GB swap file) in Korea
+Central, Ubuntu 24.04 with automatic security updates. Everything runs in Docker Compose (`deploy/`): Caddy, the app,
+PostgreSQL 17 and Redis, each with a memory limit so the four fit in about 830 MB.
+
+**Network.** The VM sits in a private network (`pulse-vnet`, app subnet 10.0.1.0/24). Two firewalls, Azure's
+network security group and `ufw` on the VM, let in only 80 and 443 from anywhere and SSH (key only, no passwords)
+from the developer's IP. PostgreSQL and Redis publish no ports; only the app reaches them, over the Compose network.
+
+**Releases.** When CI passes on `main`, a GitHub Actions workflow builds two `linux/amd64` images, the app and the
+web image (Caddy with the React build inside), and pushes them to GitHub Container Registry tagged with the commit
+SHA and `latest`. Deploying is `deploy/deploy.sh` from the developer machine: over SSH the VM pulls the images and runs
+`docker compose up -d`; Flyway migrates the database when the app starts.
+
+**Secrets.** `/opt/pulse/.env` on the VM only (mode 600): database password, JWT secret, AI key, SMTP login.
+Never in the repository or the images.
+
+**Backups.** Every night `deploy/backup.sh` writes a `pg_dump` (custom format) to `/var/backups/pulse` and keeps 14 days.
 
 ## Repository layout
 ```
@@ -372,3 +393,11 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | 2026-11-13 | The SSRF guard can trust named hosts (`PULSE_SSRF_TRUSTED_HOSTS`): empty by default, exact host names only (an IP address there stops the app at startup), a warning at startup, set only by the load-test stack | The load target must run locally: 1,000 checks a minute against someone else's site would be abuse. Every other URL is still fully checked |
 | 2026-11-13 | Every check result stores the time it was due (`check_results.scheduled_at`, V7) | Check delay is the scheduler's key number and becomes measurable for every check; two results for the same due time would expose a double check |
 | 2026-11-13 | The load test runs on the developer laptop first; `BENCHMARK.md` names the machine; it is repeated on EC2 in M9 | Results are needed now for the README; laptop numbers are honest when labelled as such |
+| 2026-11-14 | Production runs on Azure (Azure for Students credit), not AWS EC2 | No credit card is available for AWS or Oracle; Azure for Students needs none and cannot bill beyond its credit |
+| 2026-11-14 | Region Korea Central, VM size `Standard_B2ats_v2` (1 GiB RAM) | The subscription may only use five regions; Korea Central is the only one where this free-tier size is allowed for it |
+| 2026-11-14 | PostgreSQL runs in Docker on the VM, not as Azure Database for PostgreSQL | Creating the free managed server failed with `SkuNotAvailable` in every allowed region tried. It stays private (no published port); nightly `pg_dump` backups replace Azure's automatic ones |
+| 2026-11-14 | Images are built by GitHub Actions and pulled by the VM; deploys are started from the developer machine, not by Actions over SSH | A 1 GiB VM can't build the Java image; SSH is open only to the developer's IP, so GitHub's runners can't reach it, and that is the safer default |
+| 2026-11-14 | Tomcat reads the client IP from `X-Forwarded-For` (`server.forward-headers-strategy: native`) only for requests from private addresses | Behind Caddy every request comes from Caddy's address, so all visitors would share one rate-limit bucket; trusting the header only from the proxy keeps it unspoofable |
+| 2026-11-14 | Memory limits: app 448 MB (heap capped by percentage, Serial GC), PostgreSQL 192 MB, Redis 48 MB (no persistence, LRU), Caddy 64 MB | Keeps the four inside 1 GiB with the swap file as a safety net; Redis holds only rate-limit counters and a 30 s cache, so losing it on restart is harmless |
+| 2026-11-14 | Swagger UI and the OpenAPI document are switched off in production; Caddy proxies only `/api/*` and `/actuator/health` | Useful locally; in production they only enlarge the public surface. Health stays reachable so Pulse can monitor its own deployment |
+| 2026-11-14 | `loadtest/seed.sql` refuses to run unless the server says it is the load-test database | It starts with `TRUNCATE users CASCADE`; a mistaken run against a real database must fail, not wipe it |

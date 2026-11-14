@@ -27,6 +27,7 @@ x-app: &app
 services:
   postgres:
     image: postgres:17-alpine
+    command: ["postgres", "-c", "pulse.environment=loadtest"]   # seed.sql checks this before wiping anything
     environment:
       POSTGRES_DB: pulse
       POSTGRES_USER: pulse
