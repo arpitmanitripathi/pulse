@@ -51,6 +51,12 @@ cd backend && ./mvnw verify                          # backend: tests + coverage
 cd frontend && npm run lint && npm test && npm run build
 ```
 
+## Production
+
+One Azure VM with Docker Compose: Caddy (HTTPS) in front of the app, PostgreSQL and Redis. GitHub Actions builds the
+images after CI passes on `main`; `deploy/deploy.sh` rolls them out. How it is set up and why: [deploy/README.md](deploy/README.md)
+and `docs/DESIGN.md`, "Deployment".
+
 ## Tech stack
 
-Java 21 · Spring Boot 4 · PostgreSQL 17 · Flyway · Redis 7 · React 19 · TypeScript · Vite · Tailwind · Recharts · Testcontainers · Vitest · JaCoCo · Docker · GitHub Actions
+Java 21 · Spring Boot 4 · PostgreSQL 17 · Flyway · Redis 7 · React 19 · TypeScript · Vite · Tailwind · Recharts · Testcontainers · Vitest · JaCoCo · Docker · GitHub Actions · Caddy · Azure
