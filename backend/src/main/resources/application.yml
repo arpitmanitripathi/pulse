@@ -30,9 +30,15 @@ spring:
       mail.smtp.connectiontimeout: 10000
       mail.smtp.timeout: 10000
       mail.smtp.writetimeout: 10000
+      mail.smtp.auth: ${SMTP_AUTH:false}                    # true for a real provider (it needs the login above)
+      mail.smtp.starttls.enable: ${SMTP_STARTTLS:false}     # true for a real provider on port 587
+      mail.smtp.starttls.required: ${SMTP_STARTTLS:false}   # never fall back to sending in plain text
 
 server:
   shutdown: graceful
+  # Behind Caddy: take the client IP (and https) from X-Forwarded-* headers, but only when the request comes from a
+  # private address (Tomcat's default internal proxies: 10/8, 172.16/12, 192.168/16, 127/8, ...). See DESIGN.md.
+  forward-headers-strategy: native
 
 management:
   endpoints:

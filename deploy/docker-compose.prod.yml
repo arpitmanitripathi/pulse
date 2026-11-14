@@ -1,0 +1,98 @@
+# Production stack on one small VM (1 GiB RAM + 2 GB swap). Lives in /opt/pulse with .env next to it.
+# Only Caddy publishes ports; PostgreSQL and Redis are reachable only on the Compose network.
+name: pulse-prod   # not "pulse": that is the local dev stack's project name
+
+services:
+  caddy:
+    image: ${PULSE_REGISTRY:-ghcr.io/arpitmanitripathi}/pulse-web:${PULSE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # certificates: keep, or Let's Encrypt rate limits bite on rebuilds
+      - caddy_config:/config
+    depends_on:
+      - app
+    mem_limit: 64m
+
+  app:
+    image: ${PULSE_REGISTRY:-ghcr.io/arpitmanitripathi}/pulse-backend:${PULSE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/pulse
+      DB_USER: pulse
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      COOKIE_SECURE: "true"
+      APP_URL: ${APP_URL:?set APP_URL in .env}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_AUTH: ${SMTP_AUTH:-true}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      ALERT_MAIL_FROM: ${ALERT_MAIL_FROM:-Pulse <alerts@pulse.local>}   # an empty value would override the app default
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai}
+      AI_MODEL: ${AI_MODEL:-gemini-3.5-flash-lite}
+      SPRINGDOC_API_DOCS_ENABLED: "false"
+      SPRINGDOC_SWAGGER_UI_ENABLED: "false"
+      # Heap = 60 % of the container limit; Serial GC has the smallest footprint on a 2-core VM.
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:MaxMetaspaceSize=128m
+        -XX:ReservedCodeCacheSize=48m -Xss512k
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 448m
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - shared_buffers=48MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - max_connections=30
+    environment:
+      POSTGRES_DB: pulse
+      POSTGRES_USER: pulse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulse -d pulse"]
+      interval: 5s
+      retries: 20
+    mem_limit: 192m
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Only rate-limit counters and a 30 s cache: no persistence, evict least recently used when full.
+    command: ["redis-server", "--maxmemory", "32mb", "--maxmemory-policy", "allkeys-lru", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+    mem_limit: 48m
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
