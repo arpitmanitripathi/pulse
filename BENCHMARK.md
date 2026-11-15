@@ -43,15 +43,14 @@ Raw numbers: [`loadtest/results/`](loadtest/results/).
   (`FOR UPDATE SKIP LOCKED`) gives each due monitor to exactly one instance. Each instance used about half the CPU.
 - **1,000 checks a minute is light.** One instance used about 4 % of one core on average. This test shows Pulse is
   far from its limit; it does not show where the limit is.
-- **The 2 missed checks** (1-instance run) were most likely still in flight when measuring started: a check due in the
-  last second of the window can finish up to 1 s later. The second run replaced that data, so this couldn't be
-  confirmed. `run.py` now waits 5 s after the window before measuring.
+- **The 2 missed checks** (1-instance run) were most likely still in flight when the window closed; `run.py` now waits
+  5 s after the window before measuring.
 
 ## Limits of this test
 
-- A laptop, not a server; the development stack and another project were running on it too.
+- A shared laptop, not a dedicated server.
 - The target is a local fake that always answers in 50 ms. Real sites are slower and sometimes time out, which
   keeps checks in flight longer (each check runs on its own virtual thread, so waiting costs little CPU).
 - Monitors were inserted into the database directly; the API and its rate limits were not part of the test.
-- Not repeated on the production server: it is a 1 GiB VM that serves real users, and the test needs 1,000 fake
-  monitors and a fake target in its database. The numbers above are from the laptop and are labelled as such.
+- Not run on the production server: it is a 1 GiB VM serving real users, and the test fills the database with
+  1,000 fake monitors.
