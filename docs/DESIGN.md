@@ -172,11 +172,13 @@ own copy (`Cache-Control: no-cache`), so a cleared cache shows at once. No AI te
   No checks → null. Paused time has no checks, so it does not count.
 - Latency p50 / p95 use successful checks only (a timeout is not a latency).
 - 24 h: exact, from raw checks in the last 24 h. Series: 24 hourly points.
-- 7 d: the last 168 whole UTC hours including the current one. Series: 168 hourly points.
+- 7 d: the last 168 whole UTC hours including the current one; totals exact from raw checks (they are kept 7 days).
+  Series: 168 hourly points.
 - 30 d (and the 90 bars): whole UTC days including today. Series: daily points.
-- Hours older than the last 24 come from `hourly_rollups`, newer ones from raw checks. Combining hours: uptime from
-  the summed counts; p50 / p95 as the average of the hourly values weighted by successful checks (an approximation:
-  exact percentiles need every raw check, and those are deleted after 7 days).
+- Chart points older than the last 24 hours come from `hourly_rollups`, newer ones from raw checks. 30 d totals combine
+  hours: uptime from the summed counts; p50 / p95 as the average of the hourly values weighted by successful checks
+  (an approximation: exact percentiles need every raw check, and those are deleted after 7 days; the page shows them
+  with "≈").
 - Series are dense: a bucket with no checks is present with null values, so charts show the gap.
 
 **H. Jobs (one instance at a time via `pg_try_advisory_lock`, held on its own connection for the whole job).**
@@ -352,7 +354,7 @@ mobile app · Kubernetes · microservices · Kafka/RabbitMQ · Prometheus/Grafan
 | Summaries use a lease column (`summary_next_attempt_at`) instead of holding a row lock during the call | A lock held for a 10 s AI call would block the check processor from resolving that incident |
 | Default model `gemini-3.5-flash-lite`, pinned (not a `-latest` alias) | Answers in 1.6–6 s with accurate summaries (larger models took 10–60 s); a pinned name can't silently change behaviour |
 | Latency percentiles use successful checks only | A timeout or refused connection has no meaningful response time; mixing them in would hide real slowness |
-| 7 d / 30 d p50 and p95 are hourly percentiles averaged, weighted by successful checks; 24 h is exact | Raw checks are kept 7 days, so exact long-window percentiles are impossible; the weighting keeps busy hours from being outvoted by quiet ones |
+| 24 h and 7 d p50 / p95 are exact; 30 d averages hourly percentiles, weighted by successful checks | Raw checks are kept 7 days, so only 30 d needs the approximation (an average of hourly percentiles can let one slow check dominate its hour); the weighting keeps busy hours from being outvoted by quiet ones |
 | Uptime is rounded down to 2 decimals; null when there were no checks | 99.996 % must not show as 100.00 %; "no data" is different from 0 % |
 | The rollup job re-rolls from the newest rolled-up hour, upserting | One idempotent rule covers late results, a missed run and a restart |
 | New index `check_results(checked_at)` (migration V4) | The rollup and retention jobs select by time across all monitors; without it each run scans the whole table |

@@ -6,7 +6,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import org.apache.catalina.Valve;
 import org.apache.catalina.util.NetMaskSet;
@@ -48,11 +50,13 @@ class ForwardedClientIpTest {
 	@Test
 	void visitorsBehindTheProxyGetTheirOwnRateLimit() throws Exception {
 		// The test connects from 127.0.0.1, a private address, like Caddy on the Docker network.
-		int status = 0;
-		for (int i = 0; i < 11; i++) {
-			status = loginFrom("203.0.113.7");
+		// The limit is 10 per clock minute. 21 logins span at most two minutes, so one of them always gets 11 or more,
+		// even when the run crosses a minute boundary.
+		List<Integer> statuses = new ArrayList<>();
+		for (int i = 0; i < 21; i++) {
+			statuses.add(loginFrom("203.0.113.7"));
 		}
-		assertThat(status).as("11th login from the same visitor").isEqualTo(429);
+		assertThat(statuses).as("logins from the same visitor").contains(429);
 
 		assertThat(loginFrom("203.0.113.8")).as("another visitor is not limited").isEqualTo(401);
 	}

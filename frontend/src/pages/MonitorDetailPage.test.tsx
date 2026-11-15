@@ -32,6 +32,9 @@ describe('monitor detail page', () => {
     await user.click(screen.getByRole('tab', { name: '7 days' }))
     expect(await screen.findByText('99.50%')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '7 days' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('480 ms')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '30 days' }))
+    expect(await screen.findByText('≈ 480 ms')).toBeInTheDocument()
 
     expect(await screen.findByRole('link', { name: /Ongoing/ })).toHaveAttribute('href', '/incidents/i1')
     expect(await screen.findByText('No answer within 5000 ms.')).toBeInTheDocument()
