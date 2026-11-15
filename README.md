@@ -1,21 +1,41 @@
 # Pulse
 
+[![CI](https://github.com/arpitmanitripathi/pulse/actions/workflows/ci.yml/badge.svg)](https://github.com/arpitmanitripathi/pulse/actions/workflows/ci.yml)
+
 Uptime monitoring with incident detection, one alert per incident, LLM-written incident summaries
 and public status pages.
 
-**Live:** https://pulse.koreacentral.cloudapp.azure.com
+**Live:** https://pulse.koreacentral.cloudapp.azure.com ·
+**Public status page:** https://pulse.koreacentral.cloudapp.azure.com/s/phishlens
 
-## Features
+![Monitor page: uptime, p50 / p95 response time, incidents](docs/screenshots/monitor.png)
 
-- HTTP(S) checks every 30 s to 5 min, with SSRF protection (private and reserved addresses are refused)
-- An incident opens after 3 failed checks in a row and closes after 2 successful ones
-- One DOWN and one RECOVERED alert per incident and channel: email, Slack or Discord, retried with backoff
-- A short AI-written summary of each incident (any OpenAI-compatible API; optional)
-- Uptime and latency (p50 / p95) over 24 h, 7 days and 30 days
-- Public status pages
-- Safe to run as several instances: PostgreSQL row locks give each check to exactly one instance
+## What it does
 
-Design and reasons: [docs/DESIGN.md](docs/DESIGN.md). Load test: [BENCHMARK.md](BENCHMARK.md).
+- Checks HTTP(S) endpoints every 30 s to 5 min and tracks uptime and response time (p50 / p95) over 24 h, 7 and 30 days
+- Opens an incident after 3 failed checks in a row and closes it after 2 successful ones
+- Sends one DOWN and one RECOVERED alert per incident to email, Slack or Discord
+- Adds a short AI-written summary to each incident (any OpenAI-compatible API; optional)
+- Publishes public status pages
+
+| Monitors | Public status page |
+|---|---|
+| ![Monitors list](docs/screenshots/monitors.png) | ![Public status page](docs/screenshots/status-page.png) |
+
+## Engineering highlights
+
+- **Java 21 virtual threads:** every check, alert and AI call is plain blocking code on its own virtual thread;
+  a semaphore caps checks in flight.
+- **Several instances, no message broker:** due monitors are claimed with PostgreSQL `FOR UPDATE SKIP LOCKED`, so
+  each check runs on exactly one instance (tested with two schedulers on one database).
+- **Transactional outbox for alerts:** alerts are written in the same transaction as the incident, then sent with
+  retries and backoff; a crash can't lose one, and RECOVERED never arrives before DOWN.
+- **SSRF protection:** private and reserved addresses are refused, and the checker connects only to the addresses
+  the guard approved, including after redirects.
+- **AI never blocks alerting:** summaries run separately, and Pulse works fully without an API key.
+- **Tested against real dependencies:** Testcontainers (PostgreSQL, Redis), WireMock, 80 % line coverage enforced in CI.
+
+Design and reasons: [docs/DESIGN.md](docs/DESIGN.md). Load test (laptop): [BENCHMARK.md](BENCHMARK.md).
 
 ## Architecture
 
