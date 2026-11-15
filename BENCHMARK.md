@@ -53,4 +53,5 @@ Raw numbers: [`loadtest/results/`](loadtest/results/).
 - The target is a local fake that always answers in 50 ms. Real sites are slower and sometimes time out, which
   keeps checks in flight longer (each check runs on its own virtual thread, so waiting costs little CPU).
 - Monitors were inserted into the database directly; the API and its rate limits were not part of the test.
-- To be repeated on the production server (M9).
+- Not repeated on the production server: it is a 1 GiB VM that serves real users, and the test needs 1,000 fake
+  monitors and a fake target in its database. The numbers above are from the laptop and are labelled as such.

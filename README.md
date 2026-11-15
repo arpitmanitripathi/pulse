@@ -3,7 +3,27 @@
 Uptime monitoring with incident detection, one alert per incident, LLM-written incident summaries
 and public status pages.
 
-> Work in progress. How it works and why: [docs/DESIGN.md](docs/DESIGN.md).
+**Live:** https://pulse.koreacentral.cloudapp.azure.com
+
+How it works and why: [docs/DESIGN.md](docs/DESIGN.md). Load test: [BENCHMARK.md](BENCHMARK.md).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U[Browser] -->|HTTPS| C
+    subgraph VM["Azure VM, Docker Compose"]
+        C["Caddy<br/>HTTPS + React app"] -->|/api| A["Spring Boot app<br/>API, scheduler, checker,<br/>alerts, AI summaries"]
+        A --> P[(PostgreSQL)]
+        A --> R[(Redis)]
+    end
+    A -->|checks| S[Monitored sites]
+    A -->|alerts| N[Email, Slack, Discord]
+    A -->|summaries| L[LLM API]
+```
+
+One app does everything; PostgreSQL decides which instance checks which monitor, so more instances can be added
+without a message broker.
 
 ## Status
 
@@ -18,7 +38,7 @@ and public status pages.
 | M6 Stats + status page | ✅ |
 | M7 Frontend | ✅ |
 | M8 Load test | ✅ [results](BENCHMARK.md) |
-| M9 Ship | ⏳ |
+| M9 Ship | ✅ [live](https://pulse.koreacentral.cloudapp.azure.com) |
 
 ## Run it locally
 

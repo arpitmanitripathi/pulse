@@ -43,16 +43,17 @@ services:
       AI_MODEL: ${AI_MODEL:-gemini-3.5-flash-lite}
       SPRINGDOC_API_DOCS_ENABLED: "false"
       SPRINGDOC_SWAGGER_UI_ENABLED: "false"
-      # Heap = 60 % of the container limit; Serial GC has the smallest footprint on a 2-core VM.
+      # Heap = 50 % of the container limit; Serial GC has the smallest footprint on a 2-core VM.
+      # Metaspace (loaded classes) is ~125 MB right after start and ~130 MB in use; 128 MB was too small.
       JAVA_TOOL_OPTIONS: >-
-        -XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:MaxMetaspaceSize=128m
+        -XX:MaxRAMPercentage=50 -XX:+UseSerialGC -XX:MaxMetaspaceSize=192m
         -XX:ReservedCodeCacheSize=48m -Xss512k
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    mem_limit: 448m
+    mem_limit: 512m
 
   postgres:
     image: postgres:17-alpine
