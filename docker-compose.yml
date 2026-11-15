@@ -49,7 +49,7 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai}
       AI_MODEL: ${AI_MODEL:-gemini-3.5-flash-lite}
     ports:
-      - "${PULSE_PORT:-8080}:8080"   # PULSE_PORT=8081 if 8080 is taken on your machine
+      - "${PULSE_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
