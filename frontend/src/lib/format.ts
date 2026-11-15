@@ -22,6 +22,18 @@ export function formatDay(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+/** For an axis of hourly points labelled by date: the first point of each new local day (never the first point). */
+export function dayStarts(starts: string[]): string[] {
+  const ticks: string[] = []
+  let previousDay: string | null = null
+  for (const s of starts) {
+    const day = new Date(s).toDateString()
+    if (previousDay !== null && day !== previousDay) ticks.push(s)
+    previousDay = day
+  }
+  return ticks
+}
+
 /** "3 min", "2 h 5 min", "1 d 4 h". */
 export function formatDuration(fromIso: string, toIso: string | null, now = Date.now()): string {
   const end = toIso ? new Date(toIso).getTime() : now

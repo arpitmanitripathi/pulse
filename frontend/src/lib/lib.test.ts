@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PublicMonitor } from '../api/types'
-import { formatDuration, formatMs, formatUptime } from './format'
+import { dayStarts, formatDay, formatDuration, formatMs, formatUptime } from './format'
 import { validateMonitor } from './monitorRules'
 import { barColor, overall, SLUG, slugify } from './status'
 
@@ -47,6 +47,24 @@ describe('formatting', () => {
     expect(formatDuration(t, '2026-11-12T12:05:00Z')).toBe('2 h 5 min')
     expect(formatDuration(t, '2026-11-14T13:00:00Z')).toBe('2 d 3 h')
     expect(formatDuration(t, null, Date.parse('2026-11-12T11:00:00Z'))).toBe('1 h')
+  })
+})
+
+describe('7-day chart axis', () => {
+  it('puts one tick at the first hour of each new local day, so every label is a different date', () => {
+    const start = Date.UTC(2026, 10, 9)
+    const hours = Array.from({ length: 72 }, (_, i) => new Date(start + i * 3_600_000).toISOString())
+    const ticks = dayStarts(hours)
+
+    // 72 hours always cross 2 or 3 local midnights, whatever the time zone; the first point is never a tick.
+    expect(ticks.length).toBeGreaterThanOrEqual(2)
+    expect(ticks.length).toBeLessThanOrEqual(3)
+    expect(ticks).not.toContain(hours[0])
+    for (const t of ticks) {
+      const before = new Date(Date.parse(t) - 3_600_000)
+      expect(before.toDateString()).not.toBe(new Date(t).toDateString())
+    }
+    expect(new Set(ticks.map(formatDay)).size).toBe(ticks.length)
   })
 })
 

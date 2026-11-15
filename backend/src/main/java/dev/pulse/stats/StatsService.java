@@ -49,9 +49,12 @@ public class StatsService {
 						"HOUR", StatsMath.hourly(hours, firstHour, 24));
 			}
 			case D7 -> {
+				// Raw checks are kept 7 days (RetentionJob.RAW_KEEP), so the totals are exact here too;
+				// only the chart's points come from hourly buckets.
+				Bucket total = repository.rawTotals(ids, from, now.plusNanos(1)).get(monitorId);
 				List<Bucket> hours = repository.hourly(ids, from, now).getOrDefault(monitorId, List.of());
-				yield MonitorStats.of(window, from, now, StatsMath.combine(from, hours), "HOUR",
-						StatsMath.hourly(hours, from, 168));
+				yield MonitorStats.of(window, from, now, total == null ? StatsMath.combine(from, List.of()) : total,
+						"HOUR", StatsMath.hourly(hours, from, 168));
 			}
 			case D30 -> {
 				List<Bucket> hours = repository.hourly(ids, from, now).getOrDefault(monitorId, List.of());

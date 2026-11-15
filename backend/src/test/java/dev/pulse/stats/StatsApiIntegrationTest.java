@@ -77,15 +77,37 @@ class StatsApiIntegrationTest {
 	}
 
 	@Test
-	void sevenDaysCombinesRawHoursWithRollups() throws Exception {
-		// raw 4 checks (1 failed) + rollups 1 (1 failed) and 60 (6 failed) = 65 checks, 8 failed → 87.69 %
+	void sevenDaysIsExactFromRawChecks() throws Exception {
+		// Raw checks are kept 7 days, so the totals use them, not rollups: the 4 above plus the one 25 h ago
+		// = 5 checks, 2 failed → 60 %; successful latencies 100, 200, 400 → p50 200, p95 400.
 		mvc.perform(get("/api/monitors/" + api + "/stats?window=7d").header("Authorization", alice.bearer()))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.checks").value(65))
-			.andExpect(jsonPath("$.failures").value(8))
-			.andExpect(jsonPath("$.uptime").value(87.69))
+			.andExpect(jsonPath("$.checks").value(5))
+			.andExpect(jsonPath("$.failures").value(2))
+			.andExpect(jsonPath("$.uptime").value(60.0))
+			.andExpect(jsonPath("$.latencyP50").value(200))
+			.andExpect(jsonPath("$.latencyP95").value(400))
 			.andExpect(jsonPath("$.series.length()").value(168))
 			.andExpect(jsonPath("$.from").value(thisHour.minus(Duration.ofHours(167)).toString()));
+	}
+
+	@Test
+	void sevenDaysAndTwentyFourHoursAgreeOnTheSameChecks() throws Exception {
+		// Three hours of 12 checks at 100 ms, one of them 5,700 ms. Exact p95 over all 36 is 100 ms; averaging the
+		// hourly p95s (5,700, 100, 100) would give ~1,967 ms.
+		UUID spiky = monitor(alice, "Spiky", 3);
+		for (int hour = 1; hour <= 3; hour++) {
+			for (int i = 0; i < 12; i++) {
+				int latency = hour == 3 && i == 0 ? 5700 : 100;
+				check(spiky, thisHour.minus(Duration.ofHours(hour)).plus(Duration.ofMinutes(i * 4L)), true, latency);
+			}
+		}
+		for (String window : new String[] { "24h", "7d" }) {
+			mvc.perform(get("/api/monitors/" + spiky + "/stats?window=" + window).header("Authorization", alice.bearer()))
+				.andExpect(jsonPath("$.checks").value(36))
+				.andExpect(jsonPath("$.latencyP50").value(100))
+				.andExpect(jsonPath("$.latencyP95").value(100));
+		}
 	}
 
 	@Test

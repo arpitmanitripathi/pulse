@@ -1,5 +1,6 @@
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { formatDay, formatHour, formatMs } from '../lib/format'
+import type { StatsWindow } from '../api/types'
+import { dayStarts, formatDay, formatHour, formatMs } from '../lib/format'
 
 interface LatencyPoint {
   start: string
@@ -7,9 +8,14 @@ interface LatencyPoint {
   latencyP95: number | null
 }
 
-/** p50 and p95 response time over time (Recharts: loaded only with the monitor page). Gaps (no successful checks) stay gaps. */
-export function LatencyChart({ points, daily = false }: { points: LatencyPoint[]; daily?: boolean }) {
-  const label = daily ? formatDay : formatHour
+/**
+ * p50 and p95 response time over time (Recharts: loaded only with the monitor page). Gaps (no successful checks)
+ * stay gaps. 24 h is labelled by time; 7 d (hourly points) and 30 d (daily points) by date.
+ */
+export function LatencyChart({ points, range }: { points: LatencyPoint[]; range: StatsWindow }) {
+  const daily = range === '30d'
+  const label = range === '24h' ? formatHour : formatDay
+  const ticks = range === '7d' ? dayStarts(points.map((p) => p.start)) : undefined
   if (!points.some((p) => p.latencyP50 != null)) {
     return <p className="py-8 text-center text-sm text-slate-500">No successful checks in this window, so there is no response time to show.</p>
   }
@@ -18,7 +24,7 @@ export function LatencyChart({ points, daily = false }: { points: LatencyPoint[]
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="#e2e8f0" vertical={false} />
-          <XAxis dataKey="start" tickFormatter={label} tick={{ fontSize: 12, fill: '#64748b' }} minTickGap={32} />
+          <XAxis dataKey="start" tickFormatter={label} ticks={ticks} interval={ticks ? 0 : 'preserveEnd'} tick={{ fontSize: 12, fill: '#64748b' }} minTickGap={32} />
           <YAxis tickFormatter={(v: number) => formatMs(v)} tick={{ fontSize: 12, fill: '#64748b' }} width={64} />
           <Tooltip
             labelFormatter={(v) => (daily ? formatDay(String(v)) : new Date(String(v)).toLocaleString())}

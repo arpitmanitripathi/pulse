@@ -125,6 +125,12 @@ export function MonitorDetailPage() {
   )
 }
 
+/** 30 d percentiles are averaged from hourly values (raw checks are kept 7 days), so they are marked as approximate. */
+function Latency({ ms, approximate }: { ms: number | null; approximate: boolean }) {
+  if (ms == null || !approximate) return <>{formatMs(ms)}</>
+  return <span title="Approximate: averaged from hourly values">≈ {formatMs(ms)}</span>
+}
+
 function StatsSection({ monitorId }: { monitorId: string }) {
   const [range, setRange] = useState<StatsWindow>('24h')
   const { data, error } = useApi<MonitorStats>(`/api/monitors/${monitorId}/stats?window=${range}`, { refreshMs: REFRESH_MS })
@@ -153,11 +159,11 @@ function StatsSection({ monitorId }: { monitorId: string }) {
         <>
           <dl className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
             <Stat label="Uptime" value={formatUptime(data.uptime)} />
-            <Stat label="p50 (typical)" value={formatMs(data.latencyP50)} />
-            <Stat label="p95 (slowest 5%)" value={formatMs(data.latencyP95)} />
+            <Stat label="p50 (typical)" value={<Latency ms={data.latencyP50} approximate={data.window === '30d'} />} />
+            <Stat label="p95 (slowest 5%)" value={<Latency ms={data.latencyP95} approximate={data.window === '30d'} />} />
             <Stat label="Checks / failed" value={`${data.checks} / ${data.failures}`} />
           </dl>
-          {data.checks === 0 ? <p className="py-8 text-center text-sm text-slate-500">No checks in this window yet.</p> : <LatencyChart points={data.series} daily={data.bucket === 'DAY'} />}
+          {data.checks === 0 ? <p className="py-8 text-center text-sm text-slate-500">No checks in this window yet.</p> : <LatencyChart points={data.series} range={data.window} />}
         </>
       )}
     </Card>
