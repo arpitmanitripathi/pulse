@@ -55,7 +55,7 @@ describe('public status page', () => {
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
 
     await user.hover(items[89]!)
-    expect(screen.getByRole('tooltip')).toHaveTextContent(/15 Nov 2026.*\(UTC\).*100\.00% uptime/)
+    expect(screen.getByRole('tooltip')).toHaveTextContent(/(15 Nov|Nov 15),? 2026 \(UTC\).*100\.00% uptime/) // date order depends on the locale
     await user.hover(items[0]!)
     expect(screen.getByRole('tooltip')).toHaveTextContent('no data')
     await user.unhover(bars)
