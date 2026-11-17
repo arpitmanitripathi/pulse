@@ -46,6 +46,27 @@ describe('public status page', () => {
     expect(screen.getByText(/down 5 min/)).toHaveTextContent('down 5 min, then monitoring stopped')
   })
 
+  it('shows a bar\'s day and uptime at once on hover or tap', async () => {
+    const dated = { ...page.monitors[1]!, days: page.monitors[1]!.days.map((d, i) => ({ ...d, date: i === 89 ? '2026-11-15' : d.date })) }
+    fakeApi({ 'GET /api/public/status/acme': { body: { ...page, monitors: [dated] } } })
+    const { user } = renderApp('/s/acme')
+    const bars = await screen.findByRole('list', { name: 'Daily uptime, last 90 days (UTC)' })
+    const items = within(bars).getAllByRole('listitem')
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+
+    await user.hover(items[89]!)
+    expect(screen.getByRole('tooltip')).toHaveTextContent(/(15 Nov|Nov 15),? 2026 \(UTC\).*100\.00% uptime/) // date order depends on the locale
+    await user.hover(items[0]!)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('no data')
+    await user.unhover(bars)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+
+    await user.click(items[89]!) // a tap on a phone
+    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+    await user.click(screen.getByRole('heading', { name: 'Acme status' })) // tap elsewhere
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
   it('all up', async () => {
     fakeApi({ 'GET /api/public/status/ok': { body: { ...page, monitors: [page.monitors[1]], incidents: [] } } })
     renderApp('/s/ok')

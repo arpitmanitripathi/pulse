@@ -80,3 +80,7 @@ images after CI passes on `main`; `deploy/deploy.sh` rolls them out. Details: [d
 
 Java 21 · Spring Boot 4 · PostgreSQL 17 · Flyway · Redis 7 · React 19 · TypeScript · Vite · Tailwind · Recharts ·
 Testcontainers · Vitest · JaCoCo · Docker · GitHub Actions · Caddy · Azure
+
+## License
+
+[MIT](LICENSE)
